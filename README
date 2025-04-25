@@ -1,0 +1,83 @@
+# AWS CloudFormation Templates Collection
+
+This repository contains a collection of AWS CloudFormation templates for various infrastructure management purposes.
+
+## Templates Overview
+
+### 1. CloudFormation Drift Detection (`cloudformation_drift_check.yaml`)
+A template that sets up AWS Config to monitor and detect changes in CloudFormation stacks.
+
+**Features:**
+- AWS Config rule for CloudFormation stack drift detection
+- SNS topic for email notifications
+- S3 bucket for storing AWS Config recordings
+- IAM roles and policies for proper permissions
+- Email notifications for compliance changes
+
+**Usage:**
+```bash
+aws cloudformation deploy \
+  --template-file cloudformation_drift_check.yaml \
+  --stack-name cloudformation-config-monitoring \
+  --parameter-overrides EmailAddress=your.email@example.com \
+  --capabilities CAPABILITY_IAM
+```
+
+### 2. Organization Unit Creation (`ou.yaml`)
+A template that creates an Organizational Unit (OU) named "Infrastructure" in AWS Organizations.
+
+**Features:**
+- Creates an OU under the root account
+- Assigns appropriate tags
+- Outputs the OU ID and ARN
+
+**Usage:**
+```bash
+# First, get your root ID
+aws organizations list-roots --query 'Roots[0].Id' --output text
+
+# Then deploy the template
+aws cloudformation deploy \
+  --template-file ou.yaml \
+  --stack-name infrastructure-ou \
+  --parameter-overrides RootId=your-root-id \
+  --capabilities CAPABILITY_IAM
+```
+
+### 3. Secrets Manager Configuration (`secrets-manager.yaml`)
+A template that sets up AWS Secrets Manager for storing GitHub tokens securely.
+
+**Features:**
+- Creates a secure secret in AWS Secrets Manager
+- Sets up SSM Parameter Store integration
+- Configures appropriate IAM permissions
+- Provides secure storage for GitHub tokens
+
+**Usage:**
+```bash
+aws cloudformation deploy \
+  --template-file secrets-manager.yaml \
+  --stack-name github-token-secret \
+  --parameter-overrides GitHubTokenValue=your-github-token \
+  --capabilities CAPABILITY_IAM
+```
+
+## Prerequisites
+
+Before using these templates, ensure you have:
+1. AWS CLI installed and configured
+2. Appropriate AWS permissions
+3. AWS Organizations enabled (for OU template)
+4. AWS Config enabled (for drift detection template)
+
+## Security Considerations
+
+- All templates include secure configurations by default
+- S3 buckets are configured with encryption and public access blocking
+- IAM roles follow the principle of least privilege
+- Secrets are stored securely using AWS Secrets Manager and Parameter Store
+
+
+
+
+
