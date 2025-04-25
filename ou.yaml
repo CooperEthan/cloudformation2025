@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to create Infrastructure OU in AWS Organizations'
+
+Resources:
+  # Create Infrastructure OU
+  InfrastructureOU:
+    Type: 'AWS::Organizations::OrganizationalUnit'
+    Properties:
+      Name: 'Infrastructure'
+      ParentId: !Ref RootId  # This will be the Root ID from your AWS Organization
+      Tags:
+        - Key: Purpose
+          Value: Infrastructure Management
+        - Key: Environment
+          Value: Production
+
+Parameters:
+  RootId:
+    Type: String
+    Description: 'The ID of the Root OU (e.g., r-abcd)'
+    AllowedPattern: '^r-[a-z0-9]{4,32}$'
+
+Outputs:
+  InfrastructureOUId:
+    Description: 'ID of the created Infrastructure OU'
+    Value: !Ref InfrastructureOU
+  
+  InfrastructureOUArn:
+    Description: 'ARN of the created Infrastructure OU'
+    Value: !GetAtt InfrastructureOU.Arn
