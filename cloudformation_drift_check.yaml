@@ -1,0 +1,177 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to create AWS Config rule with SNS email notifications'
+
+Parameters:
+  EmailAddress:
+    Type: String
+    Description: 'Email address to receive notifications'
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+Resources:
+  # SNS Topic for Notifications
+  ConfigNotificationTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      DisplayName: 'CloudFormation-Config-Notifications'
+      TopicName: 'CloudFormation-Config-Notifications'
+
+  # SNS Topic Policy
+  ConfigNotificationTopicPolicy:
+    Type: 'AWS::SNS::TopicPolicy'
+    Properties:
+      Topics:
+        - !Ref ConfigNotificationTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 'AllowConfigToPublishNotifications'
+            Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: 'sns:Publish'
+            Resource: !Ref ConfigNotificationTopic
+
+  # Email Subscription
+  EmailSubscription:
+    Type: 'AWS::SNS::Subscription'
+    Properties:
+      TopicArn: !Ref ConfigNotificationTopic
+      Protocol: 'email'
+      Endpoint: !Ref EmailAddress
+
+  # IAM Role for AWS Config
+  ConfigRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWS_ConfigRole'
+      Policies:
+        - PolicyName: ConfigCloudFormationAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:DescribeStacks'
+                  - 'cloudformation:ListStacks'
+                  - 'cloudformation:GetTemplateSummary'
+                  - 'cloudformation:DescribeStackEvents'
+                  - 'cloudformation:DescribeStackResource'
+                  - 'cloudformation:DescribeStackResources'
+                Resource: '*'
+              - Effect: Allow
+                Action: 'sns:Publish'
+                Resource: !Ref ConfigNotificationTopic
+
+  # S3 Bucket for AWS Config Recording
+  ConfigBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+  # S3 Bucket Policy
+  ConfigBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSConfigBucketPermissionsCheck
+            Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !Sub 'arn:aws:s3:::${ConfigBucket}'
+          - Sid: AWSConfigBucketDelivery
+            Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub 'arn:aws:s3:::${ConfigBucket}/AWSLogs/${AWS::AccountId}/*'
+            Condition:
+              StringEquals:
+                's3:x-amz-acl': 'bucket-owner-full-control'
+
+  # AWS Config Recorder
+  ConfigRecorder:
+    Type: 'AWS::Config::ConfigurationRecorder'
+    Properties:
+      Name: 'CloudFormationConfigRecorder'
+      RoleARN: !GetAtt ConfigRole.Arn
+      RecordingGroup:
+        ResourceTypes:
+          - 'AWS::CloudFormation::Stack'
+
+  # AWS Config Recorder Status
+  ConfigRecorderStatus:
+    Type: 'AWS::Config::ConfigurationRecorderStatus'
+    Properties:
+      Name: !Ref ConfigRecorder
+      Recording: true
+    DependsOn: ConfigRecorder
+
+  # AWS Config Rule for CloudFormation Stack Changes
+  CloudFormationStackDriftRule:
+    Type: 'AWS::Config::ConfigRule'
+    Properties:
+      ConfigRuleName: 'cloudformation-stack-drift-detection'
+      Description: 'Checks if CloudFormation stacks have drifted from their expected configuration'
+      Scope:
+        ComplianceResourceTypes:
+          - 'AWS::CloudFormation::Stack'
+      Source:
+        Owner: 'AWS'
+        SourceIdentifier: 'CLOUDFORMATION_STACK_DRIFT_DETECTION_CHECK'
+      # Add SNS topic as target for notifications
+      MaximumExecutionFrequency: 'TwentyFour_Hours'  # Check every 24 hours
+    DependsOn: ConfigRecorderStatus
+
+Outputs:
+  ConfigBucketName:
+    Description: 'Name of the S3 bucket storing AWS Config data'
+    Value: !Ref ConfigBucket
+
+  ConfigRoleARN:
+    Description: 'ARN of the IAM role used by AWS Config'
+    Value: !GetAtt ConfigRole.Arn
+
+  ConfigRuleName:
+    Description: 'Name of the AWS Config rule'
+    Value: !Ref CloudFormationStackDriftRule
+
+  SNSTopicARN:
+    Description: 'ARN of the SNS topic for notifications'
+    Value: !Ref ConfigNotificationTopic
+
+  NotificationEmail:
+    Description: 'Email address receiving notifications'
+    Value: !Ref EmailAddress
+
+
+#     Important Notes:
+# After deployment, you'll receive an email to confirm the SNS subscription
+# You must click the confirmation link in the email to receive notifications
+# The Config rule checks for drift every 24 hours (can be changed to Six_Hours or Three_Hours if needed)
+# You'll receive email notifications when:
+# CloudFormation stacks drift from their expected state
+# Config rule evaluations complete
+# Compliance status changes
