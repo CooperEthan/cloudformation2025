@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Enables SSM, collects inventory, updates SSM agent, and schedules daily patch scans for all EC2 instances with PatchGroup=All.
+  Enables SSM, collects inventory, updates SSM agent, schedules daily patch scans, and provides a manual patch install+reboot association for all EC2 instances with PatchGroup=All.
 
 Resources:
   SSMInstanceRole:
@@ -39,6 +39,7 @@ Resources:
     Type: AWS::SSM::Association
     Properties:
       Name: AWS-UpdateSSMAgent
+      AssociationName: DailyUpdateSSMAgent
       Targets:
         - Key: tag:PatchGroup
           Values:
@@ -51,6 +52,7 @@ Resources:
     Type: AWS::SSM::Association
     Properties:
       Name: AWS-RunPatchBaseline
+      AssociationName: DailyPatchScan
       Targets:
         - Key: tag:PatchGroup
           Values:
@@ -61,7 +63,32 @@ Resources:
           - Scan
       ComplianceSeverity: HIGH
 
+  # Manual Patch Install + Reboot (no schedule)
+  ManualPatchInstallRebootAssociation:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-RunPatchBaseline
+      AssociationName: ManualPatchInstallReboot
+      Targets:
+        - Key: tag:PatchGroup
+          Values:
+            - All
+      Parameters:
+        Operation:
+          - Scan
+        # RebootOption:
+        #   - RebootIfNeeded
+      ComplianceSeverity: HIGH
+
 Outputs:
   SSMInstanceProfile:
     Description: Attach this instance profile to your EC2 instances to enable SSM.
     Value: !Ref SSMInstanceProfile
+
+Comments:
+  - It will enable SSM, collect inventory, update the SSM agent, schedule daily patch scans, and provide a manual patch install+reboot association for all EC2 instances with PatchGroup=All.
+  - The template is designed to be used in a single account.
+  - The template is designed to be used in a single region.
+  - Need to manually change from Scan to Install in the ManualPatchInstallRebootAssociation, and then uncomment the RebootIfNeeded parameter for reboot.
+  - Because if you create it with reboot option it will run the reboot immediately, and if you don't select it, the reboot will not run until you run the association again.
+
