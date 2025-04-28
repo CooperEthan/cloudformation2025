@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Enables SSM, collects inventory, updates SSM agent, and schedules daily patch scans for all EC2 instances with PatchGroup=All.
+
+Resources:
+  SSMInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  SSMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref SSMInstanceRole
+
+  # Collect Inventory
+  InventoryAssociation:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-GatherSoftwareInventory
+      Targets:
+        - Key: tag:PatchGroup
+          Values:
+            - All
+      ScheduleExpression: cron(0 0 * * ? *) # Daily at midnight UTC
+      ComplianceSeverity: MEDIUM
+
+  # Update SSM Agent
+  UpdateSSMAgentAssociation:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-UpdateSSMAgent
+      Targets:
+        - Key: tag:PatchGroup
+          Values:
+            - All
+      ScheduleExpression: cron(0 1 * * ? *) # Daily at 1 AM UTC
+      ComplianceSeverity: MEDIUM
+
+  # Daily Patch Scan
+  DailyPatchScanAssociation:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-RunPatchBaseline
+      Targets:
+        - Key: tag:PatchGroup
+          Values:
+            - All
+      ScheduleExpression: cron(0 2 * * ? *) # Daily at 2 AM UTC
+      Parameters:
+        Operation:
+          - Scan
+      ComplianceSeverity: HIGH
+
+Outputs:
+  SSMInstanceProfile:
+    Description: Attach this instance profile to your EC2 instances to enable SSM.
+    Value: !Ref SSMInstanceProfile
