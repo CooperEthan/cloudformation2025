@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  StackSet to monitor Amazon Connect Emergency Logins across all AWS accounts and regions.
+  Sends SNS alerts when emergency logins are detected.
+
+Parameters:
+  LogGroupName:
+    Type: String
+    Description: Name of the CloudWatch Log Group where CloudTrail logs are delivered.
+
+  NotificationEmail:
+    Type: String
+    Description: Email address for receiving emergency login alerts via SNS.
+
+  AlarmThreshold:
+    Type: Number
+    Default: 1
+    Description: Number of emergency login events to trigger alarm.
+
+Resources:
+
+  EmergencyLoginSNS:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: connect-emergency-login-alerts
+
+  EmergencyLoginSNSSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+      TopicArn: !Ref EmergencyLoginSNS
+
+  EmergencyLoginMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroupName
+      FilterPattern: '{ ($.eventSource = "connect.amazonaws.com") && ($.eventName = "StartEmergencyAccessSession") }'
+      MetricTransformations:
+        - MetricValue: "1"
+          MetricNamespace: "ConnectEmergencyAccess"
+          MetricName: "EmergencyLoginDetected"
+
+  EmergencyLoginAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Connect-Emergency-Login-Alarm
+      AlarmDescription: "Alarm triggered when an emergency login occurs in Amazon Connect."
+      Namespace: ConnectEmergencyAccess
+      MetricName: EmergencyLoginDetected
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref AlarmThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref EmergencyLoginSNS
+      TreatMissingData: notBreaching
+
+  # --- Security Hub integration commented out below ---
+  # EventBridgeInvokeRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     RoleName: ConnectEmergencyLoginEventBridgeRole
+  #     AssumeRolePolicyDocument:
+  #       Version: '2012-10-17'
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service: events.amazonaws.com
+  #           Action: sts:AssumeRole
+  #     Policies:
+  #       - PolicyName: AllowEventBridgeToSecurityHub
+  #         PolicyDocument:
+  #           Version: '2012-10-17'
+  #           Statement:
+  #             - Effect: Allow
+  #               Action:
+  #                 - events:PutEvents
+  #               Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/aws/securityhub/default
+
+  # EmergencyLoginEventRule:
+  #   Type: AWS::Events::Rule
+  #   Properties:
+  #     Name: Connect-Emergency-Login-Event-Rule
+  #     Description: Detects emergency login session starts and creates Security Hub findings.
+  #     EventPattern:
+  #       source:
+  #         - aws.connect
+  #       detail-type:
+  #         - AWS API Call via CloudTrail
+  #       detail:
+  #         eventSource:
+  #           - connect.amazonaws.com
+  #         eventName:
+  #           - StartEmergencyAccessSession
+  #     Targets:
+  #       - Id: SecurityHubFinding
+  #         Arn: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/aws/securityhub/default
+  #         RoleArn: !GetAtt EventBridgeInvokeRole.Arn
+  #         InputTransformer:
+  #           InputPathsMap:
+  #             accountId: "$.account"
+  #             eventTime: "$.detail.eventTime"
+  #             region: "$.region"
+  #             userName: "$.detail.userIdentity.userName"
+  #           InputTemplate: |
+  #             {
+  #               "Findings": [
+  #                 {
+  #                   "SchemaVersion": "2018-10-08",
+  #                   "Id": "connect-emergency-<#accountId#>-<#eventTime#>",
+  #                   "ProductArn": "arn:aws:securityhub:<#region#>:<#accountId#>:product/<#accountId#>/default",
+  #                   "GeneratorId": "connect-emergency-login-detector",
+  #                   "AwsAccountId": "<#accountId#>",
+  #                   "Types": [
+  #                     "Software and Configuration Checks/AWS Security Best Practices"
+  #                   ],
+  #                   "CreatedAt": "<#eventTime#>",
+  #                   "UpdatedAt": "<#eventTime#>",
+  #                   "Severity": {
+  #                     "Label": "HIGH"
+  #                   },
+  #                   "Title": "Amazon Connect Emergency Access Login Detected",
+  #                   "Description": "An emergency access session was started by user <#userName#>.",
+  #                   "Resources": [
+  #                     {
+  #                       "Type": "AwsAccount",
+  #                       "Id": "<#accountId#>"
+  #                     }
+  #                   ],
+  #                   "RecordState": "ACTIVE",
+  #                   "Workflow": {
+  #                     "Status": "NEW"
+  #                   },
+  #                   "ProductFields": {
+  #                     "connect:EmergencyLoginDetected": "true",
+  #                     "connect:RespondImmediately": "true",
+  #                     "connect:User": "<#userName#>"
+  #                   },
+  #                   "Tags": {
+  #                     "Service": "Amazon Connect",
+  #                     "EmergencyLogin": "True",
+  #                     "Priority": "High"
+  #                   }
+  #                 }
+  #               ]
+  #             }
+
+Outputs:
+  SNSTopicArn:
+    Description: SNS topic ARN used for emergency login alerts
+    Value: !Ref EmergencyLoginSNS
+
+# Emergency login detection ➔ SNS alert (Security Hub integration is commented out)
