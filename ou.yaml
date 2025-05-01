@@ -1,30 +1,80 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudFormation template to create Infrastructure OU in AWS Organizations'
+Description: Baseline stack to enable CloudTrail, AWS Config, GuardDuty, Security Hub
 
 Resources:
-  # Create Infrastructure OU
-  InfrastructureOU:
-    Type: 'AWS::Organizations::OrganizationalUnit'
-    Properties:
-      Name: 'Infrastructure'
-      ParentId: !Ref RootId  # This will be the Root ID from your AWS Organization
-      Tags:
-        - Key: Purpose
-          Value: Infrastructure Management
-        - Key: Environment
-          Value: Production
 
-Parameters:
-  RootId:
-    Type: String
-    Description: 'The ID of the Root OU (e.g., r-abcd)'
-    AllowedPattern: '^r-[a-z0-9]{4,32}$'
+  CloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Properties:
+      TrailName: OrgTrail
+      S3BucketName: !Ref TrailBucket
+      IsLogging: true
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+
+  TrailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cloudtrail-logs-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      Name: default
+      RoleARN: !GetAtt ConfigRole.Arn
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ConfigRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSConfigRole
+
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      Name: default
+      S3BucketName: !Ref ConfigBucket
+
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub config-logs-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+
+  SecurityHub:
+    Type: AWS::SecurityHub::Hub
+    Properties: {}
 
 Outputs:
-  InfrastructureOUId:
-    Description: 'ID of the created Infrastructure OU'
-    Value: !Ref InfrastructureOU
-  
-  InfrastructureOUArn:
-    Description: 'ARN of the created Infrastructure OU'
-    Value: !GetAtt InfrastructureOU.Arn
+  TrailBucket:
+    Description: CloudTrail log bucket
+    Value: !Ref TrailBucket
+
+  ConfigBucket:
+    Description: AWS Config log bucket
+    Value: !Ref ConfigBucket
