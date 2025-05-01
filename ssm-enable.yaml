@@ -92,3 +92,4 @@ Comments:
   - Need to manually change from Scan to Install in the ManualPatchInstallRebootAssociation, and then uncomment the RebootIfNeeded parameter for reboot.
   - Because if you create it with reboot option it will run the reboot immediately, and if you don't select it, the reboot will not run until you run the association again.
 
+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
