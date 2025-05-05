@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CodePipeline to deploy a CloudFormation StackSet
+
+Parameters:
+  StackSetName:
+    Type: String
+    Default: AccessAnalyzer-Org-All-Regions
+    Description: Name of the StackSet to deploy
+
+  TargetOU:
+    Type: String
+    Description: Organization Unit ID (e.g., ou-xxxx-yyyy) to deploy StackSet to
+
+  Regions:
+    Type: CommaDelimitedList
+    Description: List of AWS regions to deploy StackSet to (e.g., us-east-1,us-west-2)
+
+Resources:
+  PipelineArtifactBucket:
+    Type: AWS::S3::Bucket
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StackSetDeployPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                  - organizations:List*
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource: "*"
+
+  StackSetDeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: StackSetDeployProject
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: STACKSET_NAME
+            Value: !Ref StackSetName
+          - Name: TARGET_OU
+            Value: !Ref TargetOU
+          - Name: REGIONS
+            Value: !Join [",", !Ref Regions]
+      Source:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 15
+      BuildSpec: |
+        version: 0.2
+        phases:
+          build:
+            commands:
+              - echo "Deploying StackSet $STACKSET_NAME to OU $TARGET_OU in regions $REGIONS"
+              - TEMPLATE_FILE=$(ls *.yaml | head -n 1)
+              - |
+                aws cloudformation create-stack-set \
+                  --stack-set-name $STACKSET_NAME \
+                  --template-body file://$TEMPLATE_FILE \
+                  --permission-model SERVICE_MANAGED \
+                  --capabilities CAPABILITY_NAMED_IAM \
+                  || echo "StackSet may already exist, continuing..."
+              - |
+                for region in $(echo $REGIONS | tr "," "\n"); do
+                  aws cloudformation create-stack-instances \
+                    --stack-set-name $STACKSET_NAME \
+                    --deployment-targets OrganizationalUnitIds=[$TARGET_OU] \
+                    --regions $region \
+                    --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1
+                done
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                  - s3:*
+                Resource: "*"
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: '1'
+              OutputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                S3Bucket: !Ref PipelineArtifactBucket
+                S3ObjectKey: stackset-template.yaml
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: DeployStackSet
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                ProjectName: !Ref StackSetDeployProject
+              RunOrder: 1
+
+Outputs:
+  PipelineBucket:
+    Description: S3 bucket for pipeline artifacts
+    Value: !Ref PipelineArtifactBucket
+  PipelineName:
+    Description: Name of the CodePipeline
+    Value: !Ref Pipeline
