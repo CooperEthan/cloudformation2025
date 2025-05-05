@@ -1,0 +1,182 @@
+# Name: ssm-dhm-quicksetup
+# Description: Enable Host Management for the AWS Organization
+# ConfigurationTargets:
+#   # - OrganizationalUnitId: ou-xxxx-yyyy
+#   - AccountId: 599326816772
+# ConfigurationDefinitions:
+# - Type: AWSQuickSetupType-SSMHostMgmt
+#   Parameters:
+#     CollectInventory: 'true'
+#     ScanInstances: 'true'
+#     UpdateSsmAgent: 'true'
+#     TargetType: "*"
+#     # TargetOrganizationalUnits: ou-ab12-cdefgh34
+#     TargetRegions: us-east-1
+
+
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to deploy a Quick Setup configuration for Host Management in a single account.
+
+Resources:
+  LocalDeploymentAdministrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: QuickSetupHostMgmtRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ssm.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: QuickSetupHostMgmtPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "ssm-quicksetup:*"
+                  - "cloudformation:DescribeStackSetOperation"
+                  - "cloudformation:ListStacks"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudformation:DescribeStackResources"
+                  - "cloudformation:ListStackSetOperations"
+                  - "cloudformation:ListStackInstances"
+                  - "cloudformation:DescribeStackSet"
+                  - "cloudformation:ListStackSets"
+                  - "cloudformation:DescribeStackInstance"
+                  - "cloudformation:DescribeOrganizationsAccess"
+                  - "cloudformation:ActivateOrganizationsAccess"
+                  - "cloudformation:GetTemplate"
+                  - "cloudformation:ListStackSetOperationResults"
+                  - "cloudformation:DescribeStackEvents"
+                  - "cloudformation:UntagResource"
+                  - "ec2:DescribeInstances"
+                  - "ssm:DescribeAutomationExecutions"
+                  - "ssm:GetAutomationExecution"
+                  - "ssm:ListAssociations"
+                  - "ssm:DescribeAssociation"
+                  - "ssm:GetDocument"
+                  - "ssm:ListDocuments"
+                  - "ssm:DescribeDocument"
+                  - "ssm:ListResourceDataSync"
+                  - "ssm:DescribePatchBaselines"
+                  - "ssm:GetPatchBaseline"
+                  - "ssm:DescribeMaintenanceWindows"
+                  - "ssm:DescribeMaintenanceWindowTasks"
+                  - "ssm:GetOpsSummary"
+                  - "organizations:DeregisterDelegatedAdministrator"
+                  - "organizations:DescribeAccount"
+                  - "organizations:DescribeOrganization"
+                  - "organizations:ListDelegatedAdministrators"
+                  - "organizations:ListRoots"
+                  - "organizations:ListParents"
+                  - "organizations:ListOrganizationalUnitsForParent"
+                  - "organizations:DescribeOrganizationalUnit"
+                  - "organizations:ListAWSServiceAccessForOrganization"
+                  - "s3:GetBucketLocation"
+                  - "s3:ListAllMyBuckets"
+                  - "s3:ListBucket"
+                  - "resource-groups:ListGroups"
+                  - "iam:ListRoles"
+                  - "iam:ListRolePolicies"
+                  - "iam:GetRole"
+                  - "iam:CreatePolicy"
+                  - "organizations:RegisterDelegatedAdministrator"
+                  - "organizations:EnableAWSServiceAccess"
+                  - "cloudformation:TagResource"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "cloudformation:RollbackStack"
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:UpdateStack"
+                  - "cloudformation:DeleteStack"
+                Resource:
+                  - "arn:aws:cloudformation:*:*:stack/StackSet-AWS-QuickSetup-*"
+                  - "arn:aws:cloudformation:*:*:stack/AWS-QuickSetup-*"
+                  - "arn:aws:cloudformation:*:*:type/resource/*"
+                  - "arn:aws:cloudformation:*:*:stack/StackSet-SSMQuickSetup"
+              - Effect: "Allow"
+                Action:
+                  - "cloudformation:CreateStackSet"
+                  - "cloudformation:UpdateStackSet"
+                  - "cloudformation:DeleteStackSet"
+                  - "cloudformation:DeleteStackInstances"
+                  - "cloudformation:CreateStackInstances"
+                  - "cloudformation:StopStackSetOperation"
+                Resource:
+                  - "arn:aws:cloudformation:*:*:stackset/AWS-QuickSetup-*"
+                  - "arn:aws:cloudformation:*:*:stackset/SSMQuickSetup"
+                  - "arn:aws:cloudformation:*:*:type/resource/*"
+                  - "arn:aws:cloudformation:*:*:stackset-target/AWS-QuickSetup-*:*"
+              - Effect: "Allow"
+                Action:
+                  - "iam:CreateRole"
+                  - "iam:DeleteRole"
+                  - "iam:AttachRolePolicy"
+                  - "iam:DetachRolePolicy"
+                  - "iam:GetRolePolicy"
+                  - "iam:PassRole"
+                  - "iam:PutRolePolicy"
+                Resource:
+                  - "arn:aws:iam::*:role/AWS-QuickSetup-*"
+                  - "arn:aws:iam::*:role/service-role/AWS-QuickSetup-*"
+              - Effect: "Allow"
+                Action:
+                  - "ssm:DeleteAssociation"
+                  - "ssm:CreateAssociation"
+                  - "ssm:StartAssociationsOnce"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "ssm:StartAutomationExecution"
+                Resource: "arn:aws:ssm:*:*:automation-definition/AWS-EnableExplorer:*"
+              - Effect: "Allow"
+                Action:
+                  - "ssm:GetOpsSummary"
+                  - "ssm:CreateResourceDataSync"
+                  - "ssm:UpdateResourceDataSync"
+                Resource: "arn:aws:ssm:*:*:resource-data-sync/AWS-QuickSetup-*"
+              - Effect: "Allow"
+                Action:
+                  - "iam:CreateServiceLinkedRole"
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName:
+                      - "accountdiscovery.ssm.amazonaws.com"
+                      - "ssm.amazonaws.com"
+                      - "ssm-quicksetup.amazonaws.com"
+                      - "stacksets.cloudformation.amazonaws.com"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "iam:CreateServiceLinkedRole"
+                Resource: "arn:aws:iam::*:role/aws-service-role/stacksets.cloudformation.amazonaws.com/AWSServiceRoleForCloudFormationStackSetsOrgAdmin"
+
+  SSMQuickSetupTestConfigurationManager:
+    Type: AWS::SSMQuickSetup::ConfigurationManager
+    Properties:
+      Name: qs-host-management
+      Description: Enable Host Management for this account
+      ConfigurationDefinitions:
+        - Type: AWSQuickSetupType-SSMHostMgmt
+          Parameters:
+            CollectInventory: 'true'
+            ScanInstances: 'false'
+            UpdateSsmAgent: 'false'
+            TargetType: "*"
+            TargetAccounts: !Ref AWS::AccountId
+            TargetRegions: us-east-1
+            LocalDeploymentAdministrationRoleArn: !GetAtt LocalDeploymentAdministrationRole.Arn
+
+
+
+
+
+
+
+

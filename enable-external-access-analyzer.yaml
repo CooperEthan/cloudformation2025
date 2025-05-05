@@ -1,0 +1,13 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Enables IAM Access Analyzer for external access in each account and region.
+
+Resources:
+  AccountAccessAnalyzer:
+    Type: AWS::AccessAnalyzer::Analyzer
+    Properties:
+      AnalyzerName: account-access-analyzer
+      Type: ACCOUNT
+      Tags:
+        - Key: Purpose
+          Value: ExternalAccessAnalyzer
