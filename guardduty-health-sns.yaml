@@ -23,9 +23,6 @@ Resources:
     Properties:
       TopicName: !Sub iv-edd-${AWS::AccountId}-guardduty-health-notifications-${AWS::Region}
       KmsMasterKeyId: alias/aws/sns
-      Tags:
-        - Key: Team
-          Value: Security
 
   GuardDutyHealthSNSSubscriptionEmail:
     Type: AWS::SNS::Subscription
@@ -54,9 +51,6 @@ Resources:
       Targets:
         - Arn: !Ref GuardDutyHealthSNSTopic
           Id: GuardDutySNSTarget
-      Tags:
-        - Key: Team
-          Value: Security
 
   HealthDashboardRule:
     Type: AWS::Events::Rule
@@ -69,9 +63,6 @@ Resources:
       Targets:
         - Arn: !Ref GuardDutyHealthSNSTopic
           Id: HealthSNSTarget
-      Tags:
-        - Key: Team
-          Value: Security
 
   RootUserSignInRule:
     Type: AWS::Events::Rule
@@ -92,9 +83,6 @@ Resources:
       Targets:
         - Arn: !Ref GuardDutyHealthSNSTopic
           Id: RootUserSignInSNSTarget
-      Tags:
-        - Key: Team
-          Value: Security
 
   SNSTopicPolicy:
     Type: AWS::SNS::TopicPolicy
@@ -120,5 +108,3 @@ Outputs:
 
 
 # The SNS topic is encrypted with the AWS managed SNS key (alias/aws/sns).
-# All resources that support tags now have Team: Security.
-# Subscriptions do not support tags, so they are not tagged.
