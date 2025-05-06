@@ -1,3 +1,26 @@
+# ---------------------------------------------------------------------------------
+# CloudFormation Stack: GuardDuty, Health Dashboard, and Root User Sign-In Alerts
+#
+# This stack creates:
+#   - An SNS topic (encrypted with the AWS managed SNS key) for security notifications.
+#   - Email and SMS subscriptions to the SNS topic, with addresses provided as parameters.
+#   - EventBridge rules that:
+#       * Forward all GuardDuty findings to the SNS topic.
+#       * Forward all AWS Health Dashboard events to the SNS topic.
+#       * Forward all root user sign-in events (via CloudTrail) to the SNS topic.
+#
+# Deployment:
+#   - Deploy as a StackSet to all accounts and regions you want to monitor.
+#   - When deploying, specify the notification email and phone number.
+#   - After deployment, confirm the SNS subscription(s) to start receiving alerts.
+#
+# Use Cases:
+#   - Organization-wide security alerting for GuardDuty, Health, and root sign-ins.
+#   - Centralized notification for security and operations teams.
+
+# The SNS topic is encrypted with the AWS managed SNS key (alias/aws/sns).
+# ---------------------------------------------------------------------------------
+
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   EventBridge rules and SNS topic for GuardDuty, AWS Health Dashboard, and root user sign-in notifications in all organization accounts.
@@ -107,4 +130,4 @@ Outputs:
     Value: !Ref Region
 
 
-# The SNS topic is encrypted with the AWS managed SNS key (alias/aws/sns).
+
