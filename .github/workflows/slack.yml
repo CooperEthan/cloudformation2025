@@ -1,8 +1,8 @@
-name: Notify Slack on PR (Webhook)
+name: Notify Slack on PR (With Review Button)
 
 on:
   pull_request:
-    types: [opened, reopened, edited]
+    types: [opened, reopened, edited, review_requested]
 
 jobs:
   notify-slack:
@@ -13,13 +13,14 @@ jobs:
           curl -X POST \
           -H "Content-type: application/json" \
           --data '{
-            "text": "📢 *New PR Activity*",
+            "text": "📢 New PR: ${{ github.event.pull_request.title }}",
             "blocks": [
               {
-                "type": "section",
+                "type": "header",
                 "text": {
-                  "type": "mrkdwn",
-                  "text": "📢 *New PR Activity*"
+                  "type": "plain_text",
+                  "text": "📢 New Pull Request",
+                  "emoji": true
                 }
               },
               {
@@ -27,19 +28,49 @@ jobs:
                 "fields": [
                   {
                     "type": "mrkdwn",
-                    "text": "*PR Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
+                    "text": "*📌 Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Author:*\n@${{ github.event.pull_request.user.login }}"
+                    "text": "*👤 Author:*\n<https://github.com/${{ github.event.pull_request.user.login }}|@${{ github.event.pull_request.user.login }}>"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📂 Repo:*\n`${{ github.repository }}`"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Repo:*\n`${{ github.repository }}`"
-                  },
+                    "text": "*🏷️ Labels:*\n${{ join(github.event.pull_request.labels.*.name, ', ') || 'None' }}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*📝 Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
+                }
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "type": "actions",
+                "elements": [
                   {
-                    "type": "mrkdwn",
-                    "text": "*Action:*\n`${{ github.event.action }}`"
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "🔍 Review PR",
+                      "emoji": true
+                    },
+                    "url": "${{ github.event.pull_request.html_url }}",
+                    "style": "primary"
                   }
                 ]
               }
