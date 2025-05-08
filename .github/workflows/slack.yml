@@ -8,108 +8,98 @@ jobs:
   notify-slack:
     name: Notify Slack about PR activity
     runs-on: ubuntu-latest
-    concurrency:
-      group: slack-pr-notification-${{ github.event.pull_request.number }}
-      cancel-in-progress: false
 
     steps:
-      - name: Set env vars
-        run: echo "Setting env vars"
-        env:
-          REPO: ${{ github.repository }}
-          ACTION: ${{ github.event.action }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-          BRANCH: ${{ github.event.pull_request.head.ref }} → ${{ github.event.pull_request.base.ref }}
-          DESCRIPTION: ${{ github.event.pull_request.body || 'No description provided' }}
-          UPDATED_AT: ${{ github.event.pull_request.updated_at }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+      - name: Create Slack message payload
+        id: generate_payload
+        run: |
+          cat <<EOF > payload.json
+          {
+            "text": "New Pull Request Activity",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "🔔 GitHub Pull Request Activity"
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Repository:*\n${{ github.repository }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Action:*\n${{ github.event.action }}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*PR Title:*\n${{ github.event.pull_request.title }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*PR Number:*\n#${{ github.event.pull_request.number }}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Author:*\n${{ github.event.pull_request.user.login }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Branch:*\n${{ github.event.pull_request.head.ref }} → ${{ github.event.pull_request.base.ref }}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "Event triggered at `${{ github.event.pull_request.updated_at }}`"
+                  }
+                ]
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View PR",
+                      "emoji": true
+                    },
+                    "url": "${{ github.event.pull_request.html_url }}"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
 
-      - name: Notify Slack on PR
+      - name: Notify Slack
         uses: slackapi/slack-github-action@v1
         with:
-          payload: |
-            {
-              "text": "New Pull Request Activity",
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "🔔 GitHub Pull Request Activity"
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Repository:*\n${{ env.REPO }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Action:*\n${{ env.ACTION }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*PR Title:*\n${{ env.PR_TITLE }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*PR Number:*\n#${{ env.PR_NUMBER }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Author:*\n${{ env.AUTHOR }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Branch:*\n${{ env.BRANCH }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Description:*\n${{ env.DESCRIPTION }}"
-                  }
-                },
-                {
-                  "type": "context",
-                  "elements": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "Event triggered at `${{ env.UPDATED_AT }}`"
-                    }
-                  ]
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "View PR",
-                        "emoji": true
-                      },
-                      "url": "${{ env.PR_URL }}"
-                    }
-                  ]
-                }
-              ]
-            }
+          payload-file-path: payload.json
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
