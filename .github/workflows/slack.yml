@@ -1,0 +1,112 @@
+name: PR Notification to Slack
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  notify-slack:
+    name: Notify Slack about PR activity
+    runs-on: ubuntu-latest
+    concurrency:
+      group: slack-pr-notification-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Notify Slack on PR
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "New Pull Request Activity",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🔔 GitHub Pull Request Activity"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n${{ env.REPO }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Action:*\n${{ env.ACTION }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*PR Title:*\n${{ env.PR_TITLE }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*PR Number:*\n#${{ env.PR_NUMBER }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Author:*\n${{ env.AUTHOR }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n${{ env.HEAD_REF }} → ${{ env.BASE_REF }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Description:*\n${{ env.BODY }}"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "Event triggered at `${{ env.UPDATED_AT }}`"
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View PR",
+                        "emoji": true
+                      },
+                      "url": "${{ env.PR_URL }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          ACTION: ${{ github.event.action }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BODY: ${{ github.event.pull_request.body || 'No description provided' }}
+          UPDATED_AT: ${{ github.event.pull_request.updated_at }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
