@@ -1,6 +1,30 @@
+# ---------------------------------------------------------------------------------
+# CloudFormation Stack: GuardDuty, Health Dashboard, and Root User Sign-In Alerts
+#
+# This stack creates:
+#   - An SNS topic (encrypted with the AWS managed SNS key) for security notifications.
+#   - Email and SMS subscriptions to the SNS topic, with addresses provided as parameters.
+#   - EventBridge rules that:
+#       * Forward all GuardDuty findings to the SNS topic.
+#       * Forward all AWS Health Dashboard events to the SNS topic.
+#       * Forward all root user sign-in events (via CloudTrail) to the SNS topic.
+#
+# Deployment:
+#   - Deploy as a StackSet to all accounts and regions you want to monitor.
+#   - When deploying, specify the notification email and phone number.
+#   - After deployment, confirm the SNS subscription(s) to start receiving alerts.
+#
+# Use Cases:
+#   - Organization-wide security alerting for GuardDuty, Health, and root sign-ins.
+#   - Centralized notification for security and operations teams.
+
+# The SNS topic is encrypted with the AWS managed SNS key (alias/aws/sns).
+# ---------------------------------------------------------------------------------
+
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  EventBridge rules and SNS topic for GuardDuty, AWS Health Dashboard, and root user sign-in notifications.
+  EventBridge rules and SNS topic for GuardDuty, AWS Health Dashboard, and root user sign-in notifications in all organization accounts.
+  Region is parameterized for documentation only.
 
 Parameters:
   Region:
@@ -12,17 +36,29 @@ Parameters:
     Type: String
     Description: Email address to receive notifications.
 
+  NotificationPhone:
+    Type: String
+    Description: Phone number (in E.164 format, e.g., +1234567890) to receive SMS notifications.
+
 Resources:
   GuardDutyHealthSNSTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub iv-edd-${AWS::AccountId}-guardduty-health-notifications-${AWS::Region}
+      KmsMasterKeyId: alias/aws/sns
 
-  GuardDutyHealthSNSSubscription:
+  GuardDutyHealthSNSSubscriptionEmail:
     Type: AWS::SNS::Subscription
     Properties:
       Protocol: email
       Endpoint: !Ref NotificationEmail
+      TopicArn: !Ref GuardDutyHealthSNSTopic
+
+  GuardDutyHealthSNSSubscriptionSMS:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: sms
+      Endpoint: !Ref NotificationPhone
       TopicArn: !Ref GuardDutyHealthSNSTopic
 
   GuardDutyFindingRule:
@@ -92,3 +128,6 @@ Outputs:
   DeploymentRegion:
     Description: The region this stack is intended for (for documentation)
     Value: !Ref Region
+
+
+

@@ -1,0 +1,31 @@
+Resources:
+  AccessAnalyzerFindingSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: access-analyzer-findings
+
+  AccessAnalyzerFindingSNSSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: your-email@example.com
+      TopicArn: !Ref AccessAnalyzerFindingSNSTopic
+
+  AccessAnalyzerFindingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: AccessAnalyzerFindingToSNS
+      Description: "Send Access Analyzer external access findings to SNS"
+      EventPattern:
+        source:
+          - aws.access-analyzer
+        detail-type:
+          - Access Analyzer Finding
+        detail:
+          status:
+            - ACTIVE
+          findingType:
+            - ExternalAccess
+      Targets:
+        - Arn: !Ref AccessAnalyzerFindingSNSTopic
+          Id: AccessAnalyzerSNSTarget
