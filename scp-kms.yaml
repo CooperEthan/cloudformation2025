@@ -1,0 +1,107 @@
+# This SCP does the following:
+# **Deny S3 Bucket Creation Without KMS:
+# Prevents creation of S3 buckets without server-side encryption using KMS
+# Ensures all new buckets must use KMS encryption
+
+# Deny S3 Bucket Creation With Non-Approved KMS:
+# Restricts bucket creation to only use specific KMS keys
+# You need to replace the KMS key ARNs with your approved keys
+
+# **Deny S3 Bucket Encryption Changes:
+# Prevents changing bucket encryption settings to non-KMS encryption
+# Ensures existing buckets can't be changed to use non-KMS encryption
+
+# **Deny S3 Bucket Encryption Changes With Non-Approved KMS:
+# Prevents changing bucket encryption to use non-approved KMS keys
+# Ensures only approved KMS keys can be used for encryption
+
+# **To use this SCP:
+# Replace the following placeholders:
+# region: Your AWS region (e.g., us-east-1)
+# account-id: Your AWS account ID
+# your-kms-key-id-1, your-kms-key-id-2: Your approved KMS key IDs
+# You can add more KMS key ARNs to the list if needed
+# Attach this SCP to your AWS Organizations organizational unit (OU) or account
+
+# Important notes:
+# This SCP will affect all accounts in the OU or organization where it's attached
+# Make sure to test this in a non-production environment first
+# Consider adding exceptions for specific accounts if needed
+# The SCP will not affect existing buckets, only new bucket creation and encryption changes
+# You might want to add additional conditions based on your specific requirements
+
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            #1
+            # This policy ensures that all new S3 buckets must use KMS encryption
+            # It denies bucket creation if KMS encryption is not specified
+            "Sid": "DenyS3BucketCreationWithoutKMS",
+            "Effect": "Deny",
+            "Action": [
+                "s3:CreateBucket"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringNotEquals": {
+                    "s3:x-amz-server-side-encryption": "aws:kms"
+                }
+            }
+        },
+        {
+            #2
+            # This policy restricts bucket creation to only use specific approved KMS keys
+            # Replace the KMS key ARNs with your organization's approved keys
+            "Sid": "DenyS3BucketCreationWithNonApprovedKMS",
+            "Effect": "Deny",
+            "Action": [
+                "s3:CreateBucket"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringNotEquals": {
+                    "s3:x-amz-server-side-encryption-aws-kms-key-id": [
+                        "arn:aws:kms:region:account-id:key/your-kms-key-id-1",
+                        "arn:aws:kms:region:account-id:key/your-kms-key-id-2"
+                    ]
+                }
+            }
+        },
+        {
+            #3
+            # This policy prevents changing existing bucket encryption to non-KMS encryption
+            # Ensures buckets can't be modified to use non-KMS encryption
+            "Sid": "DenyS3BucketEncryptionChanges",
+            "Effect": "Deny",
+            "Action": [
+                "s3:PutBucketEncryption"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringNotEquals": {
+                    "s3:x-amz-server-side-encryption": "aws:kms"
+                }
+            }
+        },
+        {
+            #4
+            # This policy prevents changing bucket encryption to use non-approved KMS keys
+            # Ensures only approved KMS keys can be used for encryption changes
+            "Sid": "DenyS3BucketEncryptionChangesWithNonApprovedKMS",
+            "Effect": "Deny",
+            "Action": [
+                "s3:PutBucketEncryption"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringNotEquals": {
+                    "s3:x-amz-server-side-encryption-aws-kms-key-id": [
+                        "arn:aws:kms:region:account-id:key/your-kms-key-id-1",
+                        "arn:aws:kms:region:account-id:key/your-kms-key-id-2"
+                    ]
+                }
+            }
+        }
+    ]
+}
