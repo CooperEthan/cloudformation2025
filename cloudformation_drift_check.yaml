@@ -1,11 +1,17 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudFormation template to create AWS Config rule with SNS email notifications'
+Description: 'CloudFormation template to create AWS Config rule with SNS email and Slack notifications for drift detection'
 
 Parameters:
   EmailAddress:
     Type: String
     Description: 'Email address to receive notifications'
     AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+  SlackWorkspaceId:
+    Type: String
+    Description: 'Slack Workspace ID'
+  SlackChannelId:
+    Type: String
+    Description: 'Slack Channel ID'
 
 Resources:
   # SNS Topic for Notifications
@@ -38,6 +44,19 @@ Resources:
       TopicArn: !Ref ConfigNotificationTopic
       Protocol: 'email'
       Endpoint: !Ref EmailAddress
+
+  # AWS Chatbot Slack Channel Configuration
+  SlackChannelConfiguration:
+    Type: 'AWS::Chatbot::SlackChannelConfiguration'
+    Properties:
+      ConfigurationName: 'CloudFormation-Drift-Notifications'
+      SlackChannelId: !Ref SlackChannelId
+      SlackWorkspaceId: !Ref SlackWorkspaceId
+      SnsTopicArns:
+        - !Ref ConfigNotificationTopic
+      GuardrailPolicies:
+        - 'arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess'
+        - 'arn:aws:iam::aws:policy/AWSConfigReadOnlyAccess'
 
   # IAM Role for AWS Config
   ConfigRole:
@@ -141,8 +160,7 @@ Resources:
       Source:
         Owner: 'AWS'
         SourceIdentifier: 'CLOUDFORMATION_STACK_DRIFT_DETECTION_CHECK'
-      # Add SNS topic as target for notifications
-      MaximumExecutionFrequency: 'TwentyFour_Hours'  # Check every 24 hours
+      MaximumExecutionFrequency: 'TwentyFour_Hours'
     DependsOn: ConfigRecorderStatus
 
 Outputs:
@@ -166,12 +184,23 @@ Outputs:
     Description: 'Email address receiving notifications'
     Value: !Ref EmailAddress
 
+  SlackChannelConfigurationName:
+    Description: 'Name of the AWS Chatbot Slack Channel Configuration'
+    Value: !Ref SlackChannelConfiguration
 
-#     Important Notes:
-# After deployment, you'll receive an email to confirm the SNS subscription
-# You must click the confirmation link in the email to receive notifications
-# The Config rule checks for drift every 24 hours (can be changed to Six_Hours or Three_Hours if needed)
-# You'll receive email notifications when:
-# CloudFormation stacks drift from their expected state
-# Config rule evaluations complete
-# Compliance status changes
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Notification Settings"
+        Parameters:
+          - EmailAddress
+          - SlackWorkspaceId
+          - SlackChannelId
+    ParameterLabels:
+      EmailAddress:
+        default: "Email Address"
+      SlackWorkspaceId:
+        default: "Slack Workspace ID"
+      SlackChannelId:
+        default: "Slack Channel ID"

@@ -13,6 +13,19 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      - name: Set env vars
+        run: echo "Setting env vars"
+        env:
+          REPO: ${{ github.repository }}
+          ACTION: ${{ github.event.action }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BRANCH: ${{ github.event.pull_request.head.ref }} → ${{ github.event.pull_request.base.ref }}
+          DESCRIPTION: ${{ github.event.pull_request.body || 'No description provided' }}
+          UPDATED_AT: ${{ github.event.pull_request.updated_at }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+
       - name: Notify Slack on PR
         uses: slackapi/slack-github-action@v1
         with:
@@ -62,7 +75,7 @@ jobs:
                     },
                     {
                       "type": "mrkdwn",
-                      "text": "*Branch:*\n${{ env.HEAD_REF }} → ${{ env.BASE_REF }}"
+                      "text": "*Branch:*\n${{ env.BRANCH }}"
                     }
                   ]
                 },
@@ -70,7 +83,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Description:*\n${{ env.BODY }}"
+                    "text": "*Description:*\n${{ env.DESCRIPTION }}"
                   }
                 },
                 {
@@ -100,13 +113,3 @@ jobs:
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          REPO: ${{ github.repository }}
-          ACTION: ${{ github.event.action }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          BODY: ${{ github.event.pull_request.body || 'No description provided' }}
-          UPDATED_AT: ${{ github.event.pull_request.updated_at }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
