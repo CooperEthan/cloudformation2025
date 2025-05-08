@@ -28,9 +28,3 @@ jobs:
         SEND_USER_ID_MENTIONS : ABCDE12345,AAABBBCCCC
         SEND_GROUP_ID_MENTIONS : GROUPIDDDD,GGGGROUPID
       uses: slackapi/slack-github-action@v1
-      with:
-        message: |
-          *New PR opened*
-          *Repo:*\n${{ env.REPO }}
-          *Action:*\n${{ env.ACTION }}
-          *PR Title:*\n${{ env.PR_TITLE }}
