@@ -8,19 +8,6 @@ jobs:
   notify-slack:
     runs-on: ubuntu-latest
     steps:
-      - name: Determine event type
-        id: event_type
-        run: |
-          if [ "${{ github.event.action }}" = "opened" ]; then
-            echo "EVENT=New PR created" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event.action }}" = "reopened" ]; then
-            echo "EVENT=PR reopened" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event.action }}" = "synchronize" ]; then
-            echo "EVENT=PR updated with new commits" >> $GITHUB_OUTPUT
-          else
-            echo "EVENT=Review requested" >> $GITHUB_OUTPUT
-          fi
-
       - name: Send to Slack
         run: |
           curl -X POST \
@@ -28,11 +15,10 @@ jobs:
           --data '{
             "blocks": [
               {
-                "type": "header",
+                "type": "section",
                 "text": {
-                  "type": "plain_text",
-                  "text": "Pull Request Activity: ${{ steps.event_type.outputs.EVENT }}",
-                  "emoji": false
+                  "type": "mrkdwn",
+                  "text": "*Pull Request Updated*"
                 }
               },
               {
@@ -53,10 +39,16 @@ jobs:
               },
               {
                 "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "*PR Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
-                }
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*PR Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Changed Files:*\n${{ github.event.pull_request.changed_files }}"
+                  }
+                ]
               },
               {
                 "type": "section",
@@ -67,7 +59,7 @@ jobs:
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Changed Files:*\n${{ github.event.pull_request.changed_files }}"
+                    "text": "*Status:*\nUpdated"
                   }
                 ]
               },
