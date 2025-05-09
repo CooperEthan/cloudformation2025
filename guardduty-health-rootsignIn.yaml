@@ -1,0 +1,238 @@
+# ---------------------------------------------------------------------------------
+# CloudFormation Stack: GuardDuty, Health Dashboard, and Root User Sign-In Alerts
+#
+# This stack creates:
+#   - An SNS topic (encrypted with the AWS managed SNS key) for security notifications.
+#   - Email, SMS, and Slack subscriptions to the SNS topic.
+#   - EventBridge rules that:
+#       * Forward all GuardDuty findings to the SNS topic.
+#       * Forward all AWS Health Dashboard events to the SNS topic.
+#       * Forward all root user sign-in events (via CloudTrail) to the SNS topic.
+#
+# Deployment:
+#   - Deploy as a StackSet to all accounts and regions you want to monitor.
+#   - When deploying, specify the notification email, phone number, and Slack webhook.
+#   - After deployment, confirm the SNS subscription(s) to start receiving alerts.
+#
+# Use Cases:
+#   - Organization-wide security alerting for GuardDuty, Health, and root sign-ins.
+#   - Centralized notification for security and operations teams.
+# ---------------------------------------------------------------------------------
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  EventBridge rules and SNS topic for GuardDuty, AWS Health Dashboard, and root user sign-in notifications in all organization accounts.
+
+Parameters:
+  Region:
+    Type: String
+    Description: Default AWS regions where this stack is deployed.
+    Default: us-west-2
+
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive notifications.
+
+  NotificationPhone:
+    Type: String
+    Description: Phone number (in E.164 format, e.g., +1234567890) to receive SMS notifications.
+
+  SlackWebhookURL:
+    Type: String
+    Description: Slack webhook URL for notifications (leave blank if not using Slack)
+    Default: ""
+    NoEcho: true
+
+Resources:
+  GuardDutyHealthSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub iv-edd-${AWS::AccountId}-guardduty-health-notifications-${AWS::Region}
+      KmsMasterKeyId: alias/aws/sns
+
+  GuardDutyHealthSNSSubscriptionEmail:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+      TopicArn: !Ref GuardDutyHealthSNSTopic
+
+  GuardDutyHealthSNSSubscriptionSMS:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: sms
+      Endpoint: !Ref NotificationPhone
+      TopicArn: !Ref GuardDutyHealthSNSTopic
+
+  # Slack notification via HTTPS subscription (basic)
+  GuardDutyHealthSNSSubscriptionSlack:
+    Type: AWS::SNS::Subscription
+    Condition: HasSlackWebhook
+    Properties:
+      Protocol: https
+      Endpoint: !Ref SlackWebhookURL
+      TopicArn: !Ref GuardDutyHealthSNSTopic
+
+  # Optional: Lambda function to format messages for Slack (recommended)
+  SlackNotificationLambda:
+    Type: AWS::Lambda::Function
+    Condition: HasSlackWebhook
+    Properties:
+      FunctionName: !Sub iv-edd-${AWS::AccountId}-SlackNotificationFormatter-${AWS::Region}
+      Description: Formats SNS notifications for Slack
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import urllib3
+          
+          def lambda_handler(event, context):
+              http = urllib3.PoolManager()
+              
+              # Extract message from SNS
+              sns_message = json.loads(event['Records'][0]['Sns']['Message'])
+              
+              # Format message for Slack
+              slack_message = {
+                  "text": f"*AWS Notification* :aws:",
+                  "attachments": [
+                      {
+                          "color": "#ff0000",
+                          "fields": [
+                              {
+                                  "title": "Account ID",
+                                  "value": event['Records'][0]['Sns']['TopicArn'].split(':')[4],
+                                  "short": True
+                              },
+                              {
+                                  "title": "Region",
+                                  "value": event['Records'][0]['Sns']['TopicArn'].split(':')[3],
+                                  "short": True
+                              },
+                              {
+                                  "title": "Message",
+                                  "value": sns_message.get('detail-type', 'No detail type') + "\n" + json.dumps(sns_message, indent=2),
+                                  "short": False
+                              }
+                          ]
+                      }
+                  ]
+              }
+              
+              # Post to Slack
+              response = http.request(
+                  'POST',
+                  '${SlackWebhookURL}',
+                  body=json.dumps(slack_message),
+                  headers={'Content-Type': 'application/json'}
+              )
+              
+              return response.status
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: HasSlackWebhook
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # Subscription that uses Lambda for better Slack formatting
+  LambdaSubscriptionPermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasSlackWebhook
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt SlackNotificationLambda.Arn
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref GuardDutyHealthSNSTopic
+
+  GuardDutyHealthSNSSubscriptionLambda:
+    Type: AWS::SNS::Subscription
+    Condition: HasSlackWebhook
+    Properties:
+      Protocol: lambda
+      Endpoint: !GetAtt SlackNotificationLambda.Arn
+      TopicArn: !Ref GuardDutyHealthSNSTopic
+
+  GuardDutyFindingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub iv-edd-${AWS::AccountId}-GuardDutyFindingToSNS-${AWS::Region}
+      Description: "Send all GuardDuty findings to SNS"
+      EventPattern:
+        source:
+          - aws.guardduty
+        detail-type:
+          - GuardDuty Finding
+      Targets:
+        - Arn: !Ref GuardDutyHealthSNSTopic
+          Id: GuardDutySNSTarget
+
+  HealthDashboardRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub iv-edd-${AWS::AccountId}-HealthDashboardToSNS-${AWS::Region}
+      Description: "Send all AWS Health Dashboard notifications to SNS"
+      EventPattern:
+        source:
+          - aws.health
+      Targets:
+        - Arn: !Ref GuardDutyHealthSNSTopic
+          Id: HealthSNSTarget
+
+  RootUserSignInRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub iv-edd-${AWS::AccountId}-RootUserSignInToSNS-${AWS::Region}
+      Description: "Send notification to SNS when root user signs in"
+      EventPattern:
+        source:
+          - aws.signin
+        detail-type:
+          - AWS Console Sign In via CloudTrail
+        detail:
+          userIdentity:
+            type:
+              - Root
+          eventName:
+            - ConsoleLogin
+      Targets:
+        - Arn: !Ref GuardDutyHealthSNSTopic
+          Id: RootUserSignInSNSTarget
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref GuardDutyHealthSNSTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: "sns:Publish"
+            Resource: !Ref GuardDutyHealthSNSTopic
+
+Conditions:
+  HasSlackWebhook: !Not [!Equals [!Ref SlackWebhookURL, ""]]
+
+Outputs:
+  SNSTopicArn:
+    Description: SNS topic ARN for notifications
+    Value: !Ref GuardDutyHealthSNSTopic
+  DeploymentRegion:
+    Description: The region this stack is intended for (for documentation)
+    Value: !Ref Region
+  SlackNotificationLambdaArn:
+    Description: ARN of the Slack notification Lambda function (if deployed)
+    Value: !If [HasSlackWebhook, !GetAtt SlackNotificationLambda.Arn, "No Slack webhook provided"]
