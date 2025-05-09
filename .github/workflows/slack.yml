@@ -49,13 +49,13 @@ jobs:
                   }
                 ]
               },
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "*Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
-                }
-              },
+            #   {
+            #     "type": "section",
+            #     "text": {
+            #       "type": "mrkdwn",
+            #       "text": "*Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
+            #     }
+            #   },
               {
                 "type": "divider"
               },
