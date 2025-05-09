@@ -1,63 +1,35 @@
-name: Notify Slack on PR (With Review Button)
+name: Clean PR Slack Notifications
 
 on:
   pull_request:
-    types: [opened, reopened, edited, review_requested]
+    types: [opened, reopened, synchronize, review_requested]
 
 jobs:
   notify-slack:
     runs-on: ubuntu-latest
     steps:
-      - name: Send PR Notification to Slack
+      - name: Send to Slack
         run: |
           curl -X POST \
           -H "Content-type: application/json" \
           --data '{
-            "text": " New PR: ${{ github.event.pull_request.title }}",
             "blocks": [
               {
-                "type": "header",
+                "type": "section",
                 "text": {
-                  "type": "plain_text",
-                  "text": " New Pull Request",
-                  "emoji": true
+                  "type": "mrkdwn",
+                  "text": "*PR Updated*"
                 }
               },
               {
-                "type": "section",
-                "fields": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "* Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
-                  },
-                  {
-                    "type": "mrkdwn",
-                    "text": "*👤 Author:*\n<https://github.com/${{ github.event.pull_request.user.login }}|@${{ github.event.pull_request.user.login }}>"
-                  }
-                ]
-              },
-              {
-                "type": "section",
-                "fields": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "* Repository:*\n`${{ github.repository }}`"
-                  },
-                  {
-                    "type": "mrkdwn",
-                    "text": "* Labels:*\n${{ join(github.event.pull_request.labels.*.name, ', ') || 'None' }}"
-                  }
-                ]
-              },
-            #   {
-            #     "type": "section",
-            #     "text": {
-            #       "type": "mrkdwn",
-            #       "text": "*Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
-            #     }
-            #   },
-              {
                 "type": "divider"
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Repository: ${{ github.repository }}\nBranch: ${{ github.head_ref || github.event.pull_request.head.ref }}\nTitle: <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>\nAuthor: ${{ github.event.pull_request.user.login }}\nChanged Files: ${{ github.event.pull_request.changed_files }}"
+                }
               },
               {
                 "type": "actions",
@@ -67,10 +39,19 @@ jobs:
                     "text": {
                       "type": "plain_text",
                       "text": "Review PR",
-                      "emoji": true
+                      "emoji": false
                     },
                     "url": "${{ github.event.pull_request.html_url }}",
                     "style": "primary"
+                  },
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Changes",
+                      "emoji": false
+                    },
+                    "url": "${{ github.event.pull_request.html_url }}/files"
                   }
                 ]
               }
