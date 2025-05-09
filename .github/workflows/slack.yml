@@ -1,4 +1,4 @@
-name: Clean PR Slack Notifications
+name: Professional PR Slack Notifications
 
 on:
   pull_request:
@@ -15,10 +15,11 @@ jobs:
           --data '{
             "blocks": [
               {
-                "type": "section",
+                "type": "header",
                 "text": {
-                  "type": "mrkdwn",
-                  "text": "*PR Updated*"
+                  "type": "plain_text",
+                  "text": "Pull Request Notification",
+                  "emoji": false
                 }
               },
               {
@@ -28,8 +29,32 @@ jobs:
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "Repository: ${{ github.repository }}\nBranch: ${{ github.head_ref || github.event.pull_request.head.ref }}\nTitle: <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>\nAuthor: ${{ github.event.pull_request.user.login }}\nChanged Files: ${{ github.event.pull_request.changed_files }}"
+                  "text": "📋 *${{ github.event.pull_request.title }}*"
                 }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Repository*\n`${{ github.repository }}`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Branch*\n`${{ github.head_ref || github.event.pull_request.head.ref }}`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Author*\n${{ github.event.pull_request.user.login }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Changes*\n${{ github.event.pull_request.changed_files }} file(s)"
+                  }
+                ]
+              },
+              {
+                "type": "divider"
               },
               {
                 "type": "actions",
@@ -38,7 +63,7 @@ jobs:
                     "type": "button",
                     "text": {
                       "type": "plain_text",
-                      "text": "Review PR",
+                      "text": "Open PR",
                       "emoji": false
                     },
                     "url": "${{ github.event.pull_request.html_url }}",
@@ -52,6 +77,15 @@ jobs:
                       "emoji": false
                     },
                     "url": "${{ github.event.pull_request.html_url }}/files"
+                  },
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Commits",
+                      "emoji": false
+                    },
+                    "url": "${{ github.event.pull_request.html_url }}/commits"
                   }
                 ]
               }
