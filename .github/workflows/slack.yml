@@ -1,51 +1,51 @@
-name: Notify Slack on PR (With Review Button)
+name: Professional PR Slack Notifications
 
 on:
   pull_request:
-    types: [opened, reopened, edited, review_requested, synchronize]
+    types: [opened, reopened, synchronize, review_requested, edited]
 
 jobs:
   notify-slack:
     runs-on: ubuntu-latest
     steps:
-      - name: Send PR Notification to Slack
+      - name: Compose Slack message
+        id: message
         run: |
-          curl -X POST \
-          -H "Content-type: application/json" \
-          --data '{
-            "text": "📢 New PR: ${{ github.event.pull_request.title }}",
+          # Determine event type
+          if [[ "${{ github.event.action }}" == "opened" ]]; then
+            EVENT="New PR created"
+          elif [[ "${{ github.event.action }}" == "reopened" ]]; then
+            EVENT="PR reopened"
+          elif [[ "${{ github.event.action }}" == "synchronize" ]]; then
+            EVENT="PR updated with new commits"
+          else
+            EVENT="Review requested"
+          fi
+
+          echo "MESSAGE=$(cat <<EOF
+          {
             "blocks": [
               {
                 "type": "header",
                 "text": {
                   "type": "plain_text",
-                  "text": " New Pull Request",
+                  "text": "Pull Request Activity: ${EVENT}",
                   "emoji": false
                 }
               },
               {
-                "type": "section",
-                "fields": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "* Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
-                  },
-                  {
-                    "type": "mrkdwn",
-                    "text": "* Author:*\n<https://github.com/${{ github.event.pull_request.user.login }}|@${{ github.event.pull_request.user.login }}>"
-                  }
-                ]
+                "type": "divider"
               },
               {
                 "type": "section",
                 "fields": [
                   {
                     "type": "mrkdwn",
-                    "text": "* Repository:*\n`${{ github.repository }}`"
+                    "text": "*Repository:*\n${GITHUB_REPOSITORY}"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "* Labels:*\n${{ join(github.event.pull_request.labels.*.name, ', ') || 'None' }}"
+                    "text": "*Branch:*\n${GITHUB_HEAD_REF}"
                   }
                 ]
               },
@@ -53,11 +53,21 @@ jobs:
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "* Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
+                  "text": "*PR Title:*\n<${GITHUB_EVENT_PULL_REQUEST_HTML_URL}|${GITHUB_EVENT_PULL_REQUEST_TITLE}>"
                 }
               },
               {
-                "type": "divider"
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Author:*\n${GITHUB_EVENT_PULL_REQUEST_USER_LOGIN}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Changed Files:*\n${GITHUB_EVENT_PULL_REQUEST_CHANGED_FILES}"
+                  }
+                ]
               },
               {
                 "type": "actions",
@@ -67,13 +77,30 @@ jobs:
                     "text": {
                       "type": "plain_text",
                       "text": "Review PR",
-                      "emoji": true
+                      "emoji": false
                     },
-                    "url": "${{ github.event.pull_request.html_url }}",
+                    "url": "${GITHUB_EVENT_PULL_REQUEST_HTML_URL}",
                     "style": "primary"
+                  },
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Changes",
+                      "emoji": false
+                    },
+                    "url": "${GITHUB_EVENT_PULL_REQUEST_HTML_URL}/files"
                   }
                 ]
               }
             ]
-          }' \
+          }
+          EOF
+          )" >> $GITHUB_OUTPUT
+
+      - name: Send to Slack
+        run: |
+          curl -X POST \
+          -H "Content-type: application/json" \
+          --data "${{ steps.message.outputs.MESSAGE }}" \
           "${{ secrets.SLACK_WEBHOOK_URL }}"
