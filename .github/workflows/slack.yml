@@ -1,4 +1,4 @@
-name: Professional PR Slack Notifications
+name: Clean PR Slack Notifications
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ jobs:
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "*Pull Request Updated*"
+                  "text": "*PR Updated*"
                 }
               },
               {
@@ -26,42 +26,10 @@ jobs:
               },
               {
                 "type": "section",
-                "fields": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Repository:*\n${{ github.repository }}"
-                  },
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Branch:*\n${{ github.head_ref || github.event.pull_request.head.ref }}"
-                  }
-                ]
-              },
-              {
-                "type": "section",
-                "fields": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "*PR Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
-                  },
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Changed Files:*\n${{ github.event.pull_request.changed_files }}"
-                  }
-                ]
-              },
-              {
-                "type": "section",
-                "fields": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Author:*\n${{ github.event.pull_request.user.login }}"
-                  },
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Status:*\nUpdated"
-                  }
-                ]
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "• *Repository:* ${{ github.repository }}\n• *Branch:* ${{ github.head_ref || github.event.pull_request.head.ref }}\n• *Title:* <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>\n• *Author:* ${{ github.event.pull_request.user.login }}\n• *Files Changed:* ${{ github.event.pull_request.changed_files }}"
+                }
               },
               {
                 "type": "actions",
