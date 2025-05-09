@@ -1,36 +1,79 @@
-name: Slack Pull Request Open Notification
+name: Notify Slack on PR (With Review Button)
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, edited, review_requested]
 
 jobs:
-  build:
+  notify-slack:
     runs-on: ubuntu-latest
     steps:
-    - name: Notify slack pr open
-      env: 
-        SLACK_WEBHOOK_URL : ${{ secrets.SLACK_WEBHOOK_URL }}
-        PULL_REQUEST_NUMBER : ${{ github.event.pull_request.number }}
-        PULL_REQUEST_TITLE : ${{ github.event.pull_request.title }}
-        PULL_REQUEST_AUTHOR_NAME : ${{ github.event.pull_request.user.login }}
-        PULL_REQUEST_AUTHOR_ICON_URL : ${{ github.event.pull_request.user.avatar_url }}
-        PULL_REQUEST_URL : ${{ github.event.pull_request.html_url }}
-        PULL_REQUEST_BODY : ${{ github.event.pull_request.body }}
-        PULL_REQUEST_COMPARE_BRANCH_OWNER: ${{ github.event.pull_request.head.repo.owner.login }}
-        PULL_REQUEST_COMPARE_BRANCH_NAME : ${{ github.event.pull_request.head.ref }}
-        PULL_REQUEST_BASE_BRANCH_OWNER: ${{ github.event.pull_request.base.repo.owner.login }}
-        PULL_REQUEST_BASE_BRANCH_NAME : ${{ github.event.pull_request.base.ref }}
-        IS_SEND_HERE_MENTION : true
-        MAKE_PRETTY : false
-        MAKE_COMPACT : false
-        IS_PR_FROM_FORK: false
-        SEND_USER_ID_MENTIONS : ABCDE12345,AAABBBCCCC
-        SEND_GROUP_ID_MENTIONS : GROUPIDDDD,GGGGROUPID
-      uses: slackapi/slack-github-action@v1
-      with:
-        message: |
-          *New PR opened*
-          *Repo:*\n${{ env.REPO }}
-          *Action:*\n${{ env.ACTION }}
-          *PR Title:*\n${{ env.PR_TITLE }}
+      - name: Send PR Notification to Slack
+        run: |
+          curl -X POST \
+          -H "Content-type: application/json" \
+          --data '{
+            "text": "📢 New PR: ${{ github.event.pull_request.title }}",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "📢 New Pull Request",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📌 Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*👤 Author:*\n<https://github.com/${{ github.event.pull_request.user.login }}|@${{ github.event.pull_request.user.login }}>"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📂 Repo:*\n`${{ github.repository }}`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🏷️ Labels:*\n${{ join(github.event.pull_request.labels.*.name, ', ') || 'None' }}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*📝 Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
+                }
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "🔍 Review PR",
+                      "emoji": true
+                    },
+                    "url": "${{ github.event.pull_request.html_url }}",
+                    "style": "primary"
+                  }
+                ]
+              }
+            ]
+          }' \
+          "${{ secrets.SLACK_WEBHOOK_URL }}"
