@@ -63,7 +63,7 @@ jobs:
                     "type": "button",
                     "text": {
                       "type": "plain_text",
-                      "text": "Open PR",
+                      "text": "Review PR",
                       "emoji": false
                     },
                     "url": "${{ github.event.pull_request.html_url }}",
