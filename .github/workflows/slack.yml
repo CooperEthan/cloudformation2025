@@ -1,4 +1,4 @@
-name: Professional PR Slack Notifications
+name: PR Slack Notifications
 
 on:
   pull_request:
@@ -8,8 +8,26 @@ jobs:
   notify-slack:
     runs-on: ubuntu-latest
     steps:
+      - name: Check for duplicate events
+        id: check-duplicate
+        uses: actions/github-script@v6
+        with:
+          script: |
+            // Check if this is a duplicate sync event
+            if (context.eventName === 'pull_request' && 
+                context.payload.action === 'synchronize' && 
+                context.payload.before === context.payload.after) {
+              console.log('Skipping duplicate synchronize event');
+              return false;
+            }
+            return true;
+            
       - name: Send to Slack
+        if: steps.check-duplicate.outputs.result == 'true'
         run: |
+          # Generate a unique timestamp for this notification
+          TIMESTAMP=$(date +%s)
+          
           curl -X POST \
           -H "Content-type: application/json" \
           --data '{
@@ -18,19 +36,12 @@ jobs:
                 "type": "header",
                 "text": {
                   "type": "plain_text",
-                  "text": "Pull Request Notification",
+                  "text": "Pull Request Notification - ${{ github.event.pull_request.title }}",
                   "emoji": false
                 }
               },
               {
                 "type": "divider"
-              },
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "📋 *${{ github.event.pull_request.title }}*"
-                }
               },
               {
                 "type": "section",
@@ -42,7 +53,12 @@ jobs:
                   {
                     "type": "mrkdwn",
                     "text": "*Branch*\n`${{ github.head_ref || github.event.pull_request.head.ref }}`"
-                  },
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "fields": [
                   {
                     "type": "mrkdwn",
                     "text": "*Author*\n${{ github.event.pull_request.user.login }}"
@@ -77,15 +93,15 @@ jobs:
                       "emoji": false
                     },
                     "url": "${{ github.event.pull_request.html_url }}/files"
-                  },
+                  }
+                ]
+              },
+              {
+                "type": "context",
+                "elements": [
                   {
-                    "type": "button",
-                    "text": {
-                      "type": "plain_text",
-                      "text": "View Commits",
-                      "emoji": false
-                    },
-                    "url": "${{ github.event.pull_request.html_url }}/commits"
+                    "type": "mrkdwn",
+                    "text": "Event ID: ${{ github.run_id }} | Timestamp: $TIMESTAMP"
                   }
                 ]
               }
