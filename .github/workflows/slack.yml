@@ -2,7 +2,7 @@ name: Notify Slack on PR (With Review Button)
 
 on:
   pull_request:
-    types: [opened, reopened, edited, review_requested]
+    types: [opened, reopened, edited, review_requested, synchronize]
 
 jobs:
   notify-slack:
