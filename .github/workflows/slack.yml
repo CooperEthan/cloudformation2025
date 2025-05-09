@@ -28,7 +28,7 @@ jobs:
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "• *Repository:* ${{ github.repository }}\n• *Branch:* ${{ github.head_ref || github.event.pull_request.head.ref }}\n• *Title:* <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>\n• *Author:* ${{ github.event.pull_request.user.login }}\n• *Files Changed:* ${{ github.event.pull_request.changed_files }}"
+                  "text": "Repository: ${{ github.repository }}\nBranch: ${{ github.head_ref || github.event.pull_request.head.ref }}\nTitle: <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>\nAuthor: ${{ github.event.pull_request.user.login }}\nChanged Files: ${{ github.event.pull_request.changed_files }}"
                 }
               },
               {
