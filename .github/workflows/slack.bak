@@ -1,25 +1,35 @@
-name: Notify Slack on PR (Webhook)
+name: Professional PR Slack Notifications
 
 on:
   pull_request:
-    types: [opened, reopened, edited]
+    types: [opened, reopened, synchronize, review_requested]
 
 jobs:
   notify-slack:
     runs-on: ubuntu-latest
     steps:
-      - name: Send PR Notification to Slack
+      - name: Send to Slack
         run: |
           curl -X POST \
           -H "Content-type: application/json" \
           --data '{
-            "text": "📢 *New PR Activity*",
             "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Pull Request Notification",
+                  "emoji": false
+                }
+              },
+              {
+                "type": "divider"
+              },
               {
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "📢 *New PR Activity*"
+                  "text": "📋 *${{ github.event.pull_request.title }}*"
                 }
               },
               {
@@ -27,19 +37,55 @@ jobs:
                 "fields": [
                   {
                     "type": "mrkdwn",
-                    "text": "*PR Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
+                    "text": "*Repository*\n`${{ github.repository }}`"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Author:*\n@${{ github.event.pull_request.user.login }}"
+                    "text": "*Branch*\n`${{ github.head_ref || github.event.pull_request.head.ref }}`"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Repo:*\n`${{ github.repository }}`"
+                    "text": "*Author*\n${{ github.event.pull_request.user.login }}"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Action:*\n`${{ github.event.action }}`"
+                    "text": "*Changes*\n${{ github.event.pull_request.changed_files }} file(s)"
+                  }
+                ]
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "Review PR",
+                      "emoji": false
+                    },
+                    "url": "${{ github.event.pull_request.html_url }}",
+                    "style": "primary"
+                  },
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Changes",
+                      "emoji": false
+                    },
+                    "url": "${{ github.event.pull_request.html_url }}/files"
+                  },
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Commits",
+                      "emoji": false
+                    },
+                    "url": "${{ github.event.pull_request.html_url }}/commits"
                   }
                 ]
               }
