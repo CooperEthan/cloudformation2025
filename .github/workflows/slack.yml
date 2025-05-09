@@ -13,13 +13,13 @@ jobs:
           curl -X POST \
           -H "Content-type: application/json" \
           --data '{
-            "text": " New PR: ${{ github.event.pull_request.title }}",
+            "text": "📢 New PR: ${{ github.event.pull_request.title }}",
             "blocks": [
               {
                 "type": "header",
                 "text": {
                   "type": "plain_text",
-                  "text": " New Pull Request",
+                  "text": "📢 New Pull Request",
                   "emoji": true
                 }
               },
@@ -28,7 +28,7 @@ jobs:
                 "fields": [
                   {
                     "type": "mrkdwn",
-                    "text": "* Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
+                    "text": "*📌 Title:*\n<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
                   },
                   {
                     "type": "mrkdwn",
@@ -41,21 +41,21 @@ jobs:
                 "fields": [
                   {
                     "type": "mrkdwn",
-                    "text": "* Repository:*\n`${{ github.repository }}`"
+                    "text": "*📂 Repo:*\n`${{ github.repository }}`"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "* Labels:*\n${{ join(github.event.pull_request.labels.*.name, ', ') || 'None' }}"
+                    "text": "*🏷️ Labels:*\n${{ join(github.event.pull_request.labels.*.name, ', ') || 'None' }}"
                   }
                 ]
               },
-            #   {
-            #     "type": "section",
-            #     "text": {
-            #       "type": "mrkdwn",
-            #       "text": "*Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
-            #     }
-            #   },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*📝 Description:*\n${{ github.event.pull_request.body || 'No description provided' }}"
+                }
+              },
               {
                 "type": "divider"
               },
@@ -66,7 +66,7 @@ jobs:
                     "type": "button",
                     "text": {
                       "type": "plain_text",
-                      "text": "Review PR",
+                      "text": "🔍 Review PR",
                       "emoji": true
                     },
                     "url": "${{ github.event.pull_request.html_url }}",
