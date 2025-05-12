@@ -112,7 +112,7 @@ if __name__ == "__main__":
 # python3 scp_kms_key_usage.py --ou ou-xxxx-xxxxxxxx
 
 # With custom policy name
-# python3 scp_kms_key_usage.py --ou ou-xxxx-xxxxxxxx --name "My-Custom-Policy-Name"
+# python3 scp_kms_key_usage.py --ou ou-xxxx-xxxxxxxx --name "My-Custom-Policy-Name" --profile my-aws-profile
 
 
 # Propagation
@@ -124,9 +124,7 @@ if __name__ == "__main__":
 
 # 🚨 Rollback
 # Detach policy if needed:
-#     aws organizations detach-policy \
-#   --policy-id p-xxxxxxxx \
-#   --target-id ou-xxxx-xxxxxxxx
+# aws organizations detach-policy --policy-id p-xxxxxxxx --target-id ou-xxxx-xxxxxxxx
 
 
 # Best Practices
