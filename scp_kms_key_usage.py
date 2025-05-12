@@ -1,5 +1,6 @@
 import boto3
 import json
+import argparse
 
 def create_and_attach_scp_policy(ou_id, policy_name):
     """
@@ -47,62 +48,31 @@ def create_and_attach_scp_policy(ou_id, policy_name):
                     }
                 }
             },
-            # Commented-out rules (4-5) - will be stringified with /* */
-            """
-            {
-                "Sid": "DenyNonPrefixedKMSKeysForCreate",
-                "Effect": "Deny",
-                "Action": "s3:CreateBucket",
-                "Resource": "*",
-                "Condition": {
-                    "StringNotLikeIfExists": {
-                        "s3:x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:*:*:key/iv-*"
-                    }
-                }
-            },
-            {
-                "Sid": "DenyNonPrefixedKMSKeysForUpdates",
-                "Effect": "Deny",
-                "Action": "s3:PutBucketEncryption",
-                "Resource": "*",
-                "Condition": {
-                    "StringNotLikeIfExists": {
-                        "s3:x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:*:*:key/iv-*"
-                    }
-                }
-            }
-            """
         ]
     }
 
     try:
-        # Create and attach policy
         response = org_client.create_policy(
             Content=json.dumps(scp_policy),
-            Description="Enforces S3 KMS encryption (no tagging dependencies)",
+            Description="Enforces S3 KMS encryption",
             Name=policy_name,
             Type='SERVICE_CONTROL_POLICY'
         )
-        
         policy_id = response['Policy']['PolicySummary']['Id']
         org_client.attach_policy(PolicyId=policy_id, TargetId=ou_id)
-        
-        print(f"✅ Successfully attached policy {policy_name} to OU {ou_id}")
-        print(f"Policy ID: {policy_id}")
+        print(f"✅ Success! Policy {policy_name} attached to OU {ou_id}")
         return policy_id
-        
-    except org_client.exceptions.DuplicatePolicyException:
-        print(f"⚠️ Policy {policy_name} already exists. Skipping creation.")
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         return None
 
-# Configuration
-OU_ID = 'ou-xxxx-xxxxxxxx'  # Replace with your target OU ID
-POLICY_NAME = 'S3-KMS-Enforcement-SCP'  # Customize policy name
-
 if __name__ == "__main__":
-    create_and_attach_scp_policy(OU_ID, POLICY_NAME)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ou", required=True, help="AWS Organizational Unit ID (e.g., ou-xxxx-xxxxxxxx)")
+    parser.add_argument("--name", default="S3-KMS-Enforcement-SCP", help="SCP policy name")
+    args = parser.parse_args()
+    
+    create_and_attach_scp_policy(args.ou, args.name)
     
     
     
@@ -136,12 +106,13 @@ if __name__ == "__main__":
 #     ]
 #   }
 
-## Edit script variables:
-# OU_ID = 'ou-xxxx-xxxxxxxx'  # Replace with target OU ID
-# POLICY_NAME = 'S3-KMS-Enforcement-SCP'  # Custom policy name
+# How to Run It
+# Pass the OU ID as an argument when executing:
+# Basic usage (required OU)
+# python3 scp_kms_key_usage.py --ou ou-xxxx-xxxxxxxx
 
-# 3.Execute:
-#python3 attach_scp.py
+# With custom policy name
+# python3 scp_kms_key_usage.py --ou ou-xxxx-xxxxxxxx --name "My-Custom-Policy-Name"
 
 
 # Propagation
@@ -162,3 +133,33 @@ if __name__ == "__main__":
 # Test in non-production OUs first
 
 # Monitor with AWS Config Rules:
+
+
+
+# ****Optionally we can add following policies******
+
+            # # Commented-out rules (4-5) - will be stringified with /* */
+            # """
+            # {
+            #     "Sid": "DenyNonPrefixedKMSKeysForCreate",
+            #     "Effect": "Deny",
+            #     "Action": "s3:CreateBucket",
+            #     "Resource": "*",
+            #     "Condition": {
+            #         "StringNotLikeIfExists": {
+            #             "s3:x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:*:*:key/iv-*"
+            #         }
+            #     }
+            # },
+            # {
+            #     "Sid": "DenyNonPrefixedKMSKeysForUpdates",
+            #     "Effect": "Deny",
+            #     "Action": "s3:PutBucketEncryption",
+            #     "Resource": "*",
+            #     "Condition": {
+            #         "StringNotLikeIfExists": {
+            #             "s3:x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:*:*:key/iv-*"
+            #         }
+            #     }
+            # }
+            # """
