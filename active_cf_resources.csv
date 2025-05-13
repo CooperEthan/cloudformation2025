@@ -1,4 +1,0 @@
-Type,Name,Status,Region,CreationTime,LastUpdatedTime,Description,StackId
-Stack,mail-sender,UPDATE_COMPLETE,us-east-1,2023-03-14T01:49:58.360000+00:00,2023-04-05T00:59:20.572000+00:00,An AWS Serverless Application that uses the ASP.NET Core framework running in Amazon Lambda.,arn:aws:cloudformation:us-east-1:599326816772:stack/mail-sender/86a623d0-c20a-11ed-a136-0ab7cc53f435
-StackSet,AWSControlTowerGuardrailAWS-GR-AUDIT-BUCKET-PUBLIC-READ-PROHIBITED,ACTIVE,Global,N/A,N/A,,AWSControlTowerGuardrailAWS-GR-AUDIT-BUCKET-PUBLIC-READ-PROHIBITED:65c12693-a6bf-43d2-b9ac-3e7cdf3b63b8
-StackSet,AWSControlTowerGuardrailAWS-GR-DETECT-CLOUDTRAIL-ENABLED-ON-SHARED-ACCOUNTS,ACTIVE,Global,N/A,N/A,,AWSControlTowerGuardrailAWS-GR-DETECT-CLOUDTRAIL-ENABLED-ON-SHARED-ACCOUNTS:dd620880-8199-46d1-a842-cd73557dc01c
