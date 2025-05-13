@@ -1,0 +1,16 @@
+Type,Name,Status,CreationTime,LastUpdatedTime,Description,StackId
+StackSet,AWSControlTowerGuardrailAWS-GR-AUDIT-BUCKET-PUBLIC-READ-PROHIBITED,ACTIVE,,,,AWSControlTowerGuardrailAWS-GR-AUDIT-BUCKET-PUBLIC-READ-PROHIBITED:65c12693-a6bf-43d2-b9ac-3e7cdf3b63b8
+StackSet,AWSControlTowerGuardrailAWS-GR-DETECT-CLOUDTRAIL-ENABLED-ON-SHARED-ACCOUNTS,ACTIVE,,,,AWSControlTowerGuardrailAWS-GR-DETECT-CLOUDTRAIL-ENABLED-ON-SHARED-ACCOUNTS:dd620880-8199-46d1-a842-cd73557dc01c
+StackSet,AWS-QuickSetup-SSMHostMgmt-LA-ccv89,DELETED,,,Configures IAM roles and enables commonly used Systems Manager capabilities to securely manage your Amazon EC2 instances.,AWS-QuickSetup-SSMHostMgmt-LA-ccv89:cdfbee25-3ce4-4304-af1c-f211bf0d5a42
+StackSet,AWSControlTowerBP-BASELINE-CLOUDWATCH,DELETED,,,,AWSControlTowerBP-BASELINE-CLOUDWATCH:eb339d14-02dc-4830-8b84-0d5827c86945
+StackSet,AWSControlTowerBP-BASELINE-CONFIG,DELETED,,,,AWSControlTowerBP-BASELINE-CONFIG:84ff370f-e6f6-4fea-b371-779d40ea2fba
+StackSet,AWSControlTowerBP-BASELINE-ROLES,DELETED,,,,AWSControlTowerBP-BASELINE-ROLES:b87c029a-321d-4fb0-bad8-3eb5e253c01b
+StackSet,AWSControlTowerBP-BASELINE-SERVICE-LINKED-ROLE,DELETED,,,,AWSControlTowerBP-BASELINE-SERVICE-LINKED-ROLE:52db86e9-2d25-49cb-9c5b-d21c90fbc102
+StackSet,AWSControlTowerBP-BASELINE-SERVICE-ROLES,DELETED,,,,AWSControlTowerBP-BASELINE-SERVICE-ROLES:61c0d96f-81e3-46d2-9b04-c7ad9be2d526
+StackSet,AWSControlTowerBP-SECURITY-TOPICS,DELETED,,,,AWSControlTowerBP-SECURITY-TOPICS:56ea37a6-e868-44ae-9f12-002ff2e1ed1a
+StackSet,AWSControlTowerGuardrailAWS-GR-AUDIT-BUCKET-PUBLIC-WRITE-PROHIBITED,DELETED,,,,AWSControlTowerGuardrailAWS-GR-AUDIT-BUCKET-PUBLIC-WRITE-PROHIBITED:f68fcbb4-e575-4a23-8b40-3d0b746a9e17
+StackSet,AWSControlTowerLoggingResources,DELETED,,,,AWSControlTowerLoggingResources:bbfaea79-1277-4f61-a50a-5c3ec02b2244
+StackSet,AWSControlTowerLoggingResources,DELETED,,,,AWSControlTowerLoggingResources:b495d9e6-adc5-475c-9d1a-75bf1cb03b18
+StackSet,AWSControlTowerSecurityResources,DELETED,,,,AWSControlTowerSecurityResources:11f326b6-15cb-4352-9607-59d695c3e438
+StackSet,AWSControlTowerSecurityResources,DELETED,,,,AWSControlTowerSecurityResources:c9dbac1d-b650-47da-900e-fa55ddacfd60
+Stack,mail-sender,UPDATE_COMPLETE,2023-03-14 01:49:58.360000+00:00,2023-04-05 00:59:20.572000+00:00,An AWS Serverless Application that uses the ASP.NET Core framework running in Amazon Lambda.,arn:aws:cloudformation:us-east-1:599326816772:stack/mail-sender/86a623d0-c20a-11ed-a136-0ab7cc53f435
