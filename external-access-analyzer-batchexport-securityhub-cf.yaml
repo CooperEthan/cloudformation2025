@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Automates integration between IAM Access Analyzer and Security Hub via EventBridge'
+
+Parameters:
+  SecurityHubRegion:
+    Type: String
+    Default: us-east-1
+    Description: Region where Security Hub is enabled
+
+Resources:
+  # IAM Role for EventBridge to send findings to Security Hub
+  EventBridgeToSecurityHubRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EventBridgeToSecurityHubRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SecurityHubAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: securityhub:BatchImportFindings
+                Resource: !Sub 'arn:aws:securityhub:${SecurityHubRegion}:${AWS::AccountId}:hub/default'
+
+  # EventBridge Rule to capture Access Analyzer findings
+  AccessAnalyzerToSecurityHubRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: AccessAnalyzerToSecurityHub
+      Description: Forwards IAM Access Analyzer findings to Security Hub
+      EventPattern:
+        source:
+          - aws.accessanalyzer
+        detail-type:
+          - Access Analyzer Finding
+      State: ENABLED
+      Targets:
+        - Id: SecurityHubTarget
+          Arn: !Sub 'arn:aws:securityhub:${SecurityHubRegion}:${AWS::AccountId}:hub/default'
+          RoleArn: !GetAtt EventBridgeToSecurityHubRole.Arn
+          InputTransformer:
+            InputPathsMap:
+              findingId: $.detail.findingId
+              resourceType: $.detail.resourceType
+              principal: $.detail.principal
+              status: $.detail.status
+              createdAt: $.detail.createdAt
+              findingType: $.detail.findingType
+            InputTemplate: |
+              {
+                "Findings": [{
+                  "SchemaVersion": "2018-10-08",
+                  "ProductArn": "arn:aws:securityhub:${SecurityHubRegion}::product/aws/access-analyzer",
+                  "GeneratorId": "access-analyzer",
+                  "Id": "<findingId>",
+                  "CreatedAt": "<createdAt>",
+                  "UpdatedAt": "<createdAt>",
+                  "Severity": {"Label": "MEDIUM"},
+                  "Title": "Access Analyzer <findingType> finding for <resourceType>",
+                  "Description": "Principal <principal> has potential access issue",
+                  "Resources": [{
+                    "Type": "<resourceType>",
+                    "Id": "<findingId>"
+                  }],
+                  "FindingProviderFields": {
+                    "Severity": {"Label": "MEDIUM"},
+                    "Types": ["Software and Configuration Checks/AWS Security Best Practices"]
+                  }
+                }]
+              }
+
+  # Optional: CloudWatch Alarm for failed deliveries
+  EventBridgeDeliveryFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: AccessAnalyzerToSecurityHub-Failures
+      AlarmDescription: "Alarm when EventBridge fails to deliver findings to Security Hub"
+      Namespace: AWS/Events
+      MetricName: FailedInvocations
+      Dimensions:
+        - Name: RuleName
+          Value: !Ref AccessAnalyzerToSecurityHubRule
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:SecurityNotifications'
+
+Outputs:
+  EventBridgeRuleARN:
+    Description: ARN of the EventBridge rule
+    Value: !GetAtt AccessAnalyzerToSecurityHubRule.Arn
+  IAMRoleARN:
+    Description: IAM Role for EventBridge
+    Value: !GetAtt EventBridgeToSecurityHubRole.Arn
