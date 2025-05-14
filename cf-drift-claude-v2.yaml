@@ -114,7 +114,7 @@ Resources:
   CreateJsonArrayLambda:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.9
+      Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt DriftDetectionLambdaRole.Arn
       Code:
@@ -159,7 +159,7 @@ Resources:
     Properties:
       FunctionName: CloudFormationDriftDetector
       Description: Detects drift in all CloudFormation stacks and stacksets across multiple regions
-      Runtime: python3.9
+      Runtime: python3.12
       Handler: index.lambda_handler
       Role: !GetAtt DriftDetectionLambdaRole.Arn
       Timeout: 900  # Increased timeout to 15 minutes to handle many stacks
