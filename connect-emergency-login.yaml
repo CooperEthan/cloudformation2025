@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
   StackSet to monitor Amazon Connect Emergency Logins across all AWS accounts and regions.
-  Sends SNS alerts when emergency logins are detected.
+  Sends SNS and Slack alerts when emergency logins are detected.
 
 Parameters:
   LogGroupName:
@@ -17,6 +17,14 @@ Parameters:
     Default: 1
     Description: Number of emergency login events to trigger alarm.
 
+  SlackWorkspaceId:
+    Type: String
+    Description: The ID of the Slack workspace to send notifications to.
+
+  SlackChannelId:
+    Type: String
+    Description: The ID of the Slack channel to send notifications to.
+
 Resources:
 
   EmergencyLoginSNS:
@@ -30,6 +38,41 @@ Resources:
       Protocol: email
       Endpoint: !Ref NotificationEmail
       TopicArn: !Ref EmergencyLoginSNS
+
+  # AWS Chatbot configuration for Slack integration
+  SlackConfiguration:
+    Type: AWS::Chatbot::SlackChannelConfiguration
+    Properties:
+      ConfigurationName: ConnectEmergencyLoginSlackConfig
+      IamRoleArn: !GetAtt ChatbotRole.Arn
+      SlackWorkspaceId: !Ref SlackWorkspaceId
+      SlackChannelId: !Ref SlackChannelId
+      SnsTopicArns:
+        - !Ref EmergencyLoginSNS
+      LoggingLevel: ERROR
+
+  # IAM Role for AWS Chatbot
+  ChatbotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: chatbot.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+      Policies:
+        - PolicyName: ChatbotSNSPublishPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref EmergencyLoginSNS
 
   EmergencyLoginMetricFilter:
     Type: AWS::Logs::MetricFilter
@@ -57,99 +100,219 @@ Resources:
         - !Ref EmergencyLoginSNS
       TreatMissingData: notBreaching
 
-  # --- Security Hub integration commented out below ---
-  # EventBridgeInvokeRole:
-  #   Type: AWS::IAM::Role
-  #   Properties:
-  #     RoleName: ConnectEmergencyLoginEventBridgeRole
-  #     AssumeRolePolicyDocument:
-  #       Version: '2012-10-17'
-  #       Statement:
-  #         - Effect: Allow
-  #           Principal:
-  #             Service: events.amazonaws.com
-  #           Action: sts:AssumeRole
-  #     Policies:
-  #       - PolicyName: AllowEventBridgeToSecurityHub
-  #         PolicyDocument:
-  #           Version: '2012-10-17'
-  #           Statement:
-  #             - Effect: Allow
-  #               Action:
-  #                 - events:PutEvents
-  #               Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/aws/securityhub/default
+  --- Security Hub integration commented out below ---
+  EventBridgeInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ConnectEmergencyLoginEventBridgeRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AllowEventBridgeToSecurityHub
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/aws/securityhub/default
 
-  # EmergencyLoginEventRule:
-  #   Type: AWS::Events::Rule
-  #   Properties:
-  #     Name: Connect-Emergency-Login-Event-Rule
-  #     Description: Detects emergency login session starts and creates Security Hub findings.
-  #     EventPattern:
-  #       source:
-  #         - aws.connect
-  #       detail-type:
-  #         - AWS API Call via CloudTrail
-  #       detail:
-  #         eventSource:
-  #           - connect.amazonaws.com
-  #         eventName:
-  #           - StartEmergencyAccessSession
-  #     Targets:
-  #       - Id: SecurityHubFinding
-  #         Arn: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/aws/securityhub/default
-  #         RoleArn: !GetAtt EventBridgeInvokeRole.Arn
-  #         InputTransformer:
-  #           InputPathsMap:
-  #             accountId: "$.account"
-  #             eventTime: "$.detail.eventTime"
-  #             region: "$.region"
-  #             userName: "$.detail.userIdentity.userName"
-  #           InputTemplate: |
-  #             {
-  #               "Findings": [
-  #                 {
-  #                   "SchemaVersion": "2018-10-08",
-  #                   "Id": "connect-emergency-<#accountId#>-<#eventTime#>",
-  #                   "ProductArn": "arn:aws:securityhub:<#region#>:<#accountId#>:product/<#accountId#>/default",
-  #                   "GeneratorId": "connect-emergency-login-detector",
-  #                   "AwsAccountId": "<#accountId#>",
-  #                   "Types": [
-  #                     "Software and Configuration Checks/AWS Security Best Practices"
-  #                   ],
-  #                   "CreatedAt": "<#eventTime#>",
-  #                   "UpdatedAt": "<#eventTime#>",
-  #                   "Severity": {
-  #                     "Label": "HIGH"
-  #                   },
-  #                   "Title": "Amazon Connect Emergency Access Login Detected",
-  #                   "Description": "An emergency access session was started by user <#userName#>.",
-  #                   "Resources": [
-  #                     {
-  #                       "Type": "AwsAccount",
-  #                       "Id": "<#accountId#>"
-  #                     }
-  #                   ],
-  #                   "RecordState": "ACTIVE",
-  #                   "Workflow": {
-  #                     "Status": "NEW"
-  #                   },
-  #                   "ProductFields": {
-  #                     "connect:EmergencyLoginDetected": "true",
-  #                     "connect:RespondImmediately": "true",
-  #                     "connect:User": "<#userName#>"
-  #                   },
-  #                   "Tags": {
-  #                     "Service": "Amazon Connect",
-  #                     "EmergencyLogin": "True",
-  #                     "Priority": "High"
-  #                   }
-  #                 }
-  #               ]
-  #             }
+  EmergencyLoginEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: Connect-Emergency-Login-Event-Rule
+      Description: Detects emergency login session starts and creates Security Hub findings.
+      EventPattern:
+        source:
+          - aws.connect
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventSource:
+            - connect.amazonaws.com
+          eventName:
+            - StartEmergencyAccessSession
+      Targets:
+        - Id: SecurityHubFinding
+          Arn: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/aws/securityhub/default
+          RoleArn: !GetAtt EventBridgeInvokeRole.Arn
+          InputTransformer:
+            InputPathsMap:
+              accountId: "$.account"
+              eventTime: "$.detail.eventTime"
+              region: "$.region"
+              userName: "$.detail.userIdentity.userName"
+            InputTemplate: |
+              {
+                "Findings": [
+                  {
+                    "SchemaVersion": "2018-10-08",
+                    "Id": "connect-emergency-<#accountId#>-<#eventTime#>",
+                    "ProductArn": "arn:aws:securityhub:<#region#>:<#accountId#>:product/<#accountId#>/default",
+                    "GeneratorId": "connect-emergency-login-detector",
+                    "AwsAccountId": "<#accountId#>",
+                    "Types": [
+                      "Software and Configuration Checks/AWS Security Best Practices"
+                    ],
+                    "CreatedAt": "<#eventTime#>",
+                    "UpdatedAt": "<#eventTime#>",
+                    "Severity": {
+                      "Label": "HIGH"
+                    },
+                    "Title": "Amazon Connect Emergency Access Login Detected",
+                    "Description": "An emergency access session was started by user <#userName#>.",
+                    "Resources": [
+                      {
+                        "Type": "AwsAccount",
+                        "Id": "<#accountId#>"
+                      }
+                    ],
+                    "RecordState": "ACTIVE",
+                    "Workflow": {
+                      "Status": "NEW"
+                    },
+                    "ProductFields": {
+                      "connect:EmergencyLoginDetected": "true",
+                      "connect:RespondImmediately": "true",
+                      "connect:User": "<#userName#>"
+                    },
+                    "Tags": {
+                      "Service": "Amazon Connect",
+                      "EmergencyLogin": "True",
+                      "Priority": "High"
+                    }
+                  }
+                ]
+              }
 
 Outputs:
   SNSTopicArn:
     Description: SNS topic ARN used for emergency login alerts
     Value: !Ref EmergencyLoginSNS
+    
+  SlackConfigurationArn:
+    Description: ARN of the AWS Chatbot Slack configuration
+    Value: !Ref SlackConfiguration
 
-# Emergency login detection ➔ SNS alert (Security Hub integration is commented out)
+
+
+# Amazon Connect Emergency Login Monitor
+
+# This CloudFormation template creates a monitoring and alerting system for Amazon Connect emergency login events across AWS accounts and regions.
+
+# ## Purpose
+
+# The stack detects when emergency access sessions are started in Amazon Connect and sends notifications to administrators. This helps security teams respond quickly to emergency access usage, which is typically reserved for break-glass scenarios.
+
+# ## Features
+
+# - Monitors CloudTrail logs for emergency login events
+# - Sends email notifications via SNS when emergency logins occur
+# - Sends Slack notifications using AWS Chatbot
+# - Configurable alert threshold
+# - Optional Security Hub integration (commented out by default)
+
+# ## Prerequisites
+
+# Before deploying this template, ensure you have:
+
+# 1. CloudTrail enabled and delivering logs to a CloudWatch Log Group
+# 2. Permissions to create CloudFormation stacks with the included resources
+# 3. A valid email address to receive notifications
+# 4. A Slack workspace and channel where you want to receive notifications
+# 5. Permissions to configure AWS Chatbot with your Slack workspace
+
+# ## Parameters
+
+# | Parameter | Description | Default |
+# |-----------|-------------|---------|
+# | LogGroupName | CloudWatch Log Group where CloudTrail logs are delivered | None (Required) |
+# | NotificationEmail | Email address to receive emergency login alerts | None (Required) |
+# | AlarmThreshold | Number of emergency login events to trigger an alarm | 1 |
+# | SlackWorkspaceId | The ID of the Slack workspace to send notifications to | None (Required) |
+# | SlackChannelId | The ID of the Slack channel to send notifications to | None (Required) |
+
+# ## Deployment
+
+# ### Using AWS Console
+
+# 1. Navigate to CloudFormation in the AWS Console
+# 2. Select "Create stack" > "With new resources (standard)"
+# 3. Upload the template file
+# 4. Fill in the required parameters
+# 5. Review and create the stack
+
+# ### Using AWS CLI
+
+# ```bash
+# aws cloudformation create-stack \
+#   --stack-name connect-emergency-login-monitor \
+#   --template-body file://connect-emergency-login-monitor.yaml \
+#   --parameters ParameterKey=LogGroupName,ParameterValue=YOUR_LOG_GROUP \
+#                ParameterKey=NotificationEmail,ParameterValue=YOUR_EMAIL \
+#                ParameterKey=SlackWorkspaceId,ParameterValue=YOUR_WORKSPACE_ID \
+#                ParameterKey=SlackChannelId,ParameterValue=YOUR_CHANNEL_ID \
+#   --capabilities CAPABILITY_NAMED_IAM
+# ```
+
+# ## Testing
+
+# To verify the stack is working correctly:
+
+# 1. Deploy the stack and confirm the SNS subscription email
+# 2. Perform an emergency login in Amazon Connect:
+#    - Navigate to your Connect instance
+#    - Access User Management
+#    - Use the emergency login feature (requires appropriate permissions)
+# 3. Check both your email and the configured Slack channel for the alert notification
+# 4. Verify in CloudWatch that the metric was recorded and the alarm triggered
+
+# ## Security Hub Integration
+
+# This template includes commented code for Security Hub integration. To enable it:
+
+# 1. Uncomment the `EventBridgeInvokeRole` and `EmergencyLoginEventRule` sections
+# 2. Redeploy the stack with `CAPABILITY_NAMED_IAM` capability
+
+# Once enabled, emergency logins will also create security findings in AWS Security Hub.
+
+# ## Resources Created
+
+# - SNS Topic for notifications
+# - Email subscription to the SNS topic
+# - AWS Chatbot configuration for Slack notifications
+# - CloudWatch metric filter for detecting emergency logins
+# - CloudWatch alarm for alerting on emergency login events
+# - (Optional) IAM role for EventBridge
+# - (Optional) EventBridge rule for Security Hub integration
+
+# ## Outputs
+
+# - `SNSTopicArn`: The ARN of the SNS topic used for emergency login alerts
+# - `SlackConfigurationArn`: The ARN of the AWS Chatbot Slack configuration
+
+# ## Troubleshooting
+
+# If alerts are not working:
+
+# 1. Verify that the CloudTrail log group exists and contains logs
+# 2. Check that the SNS subscription was confirmed
+# 3. Ensure AWS Chatbot has been properly configured with the correct Slack workspace and channel
+# 4. Test the metric filter directly in CloudWatch
+# 5. Review CloudTrail to confirm emergency login events are being logged with the expected format
+# 6. Try sending a test notification to the SNS topic to verify both email and Slack delivery
+
+# ## Security Considerations
+
+# - Ensure the notification email is monitored regularly
+# - Consider enabling the Security Hub integration for centralized security monitoring
+# - Review emergency access usage regularly through CloudTrail logs
+
+# ## License
+
+# This template is provided as-is under the MIT License.
