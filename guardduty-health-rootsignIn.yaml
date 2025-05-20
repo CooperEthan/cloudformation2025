@@ -1,21 +1,3 @@
-# This stack creates:
-#   - An SNS topic (encrypted with the AWS managed SNS key) for security notifications.
-#   - Email, SMS, and Slack subscriptions to the SNS topic.
-#   - EventBridge rules that:
-#       * Forward all GuardDuty findings to the SNS topic.
-#       * Forward all AWS Health Dashboard events to the SNS topic.
-#       * Forward all root user sign-in events (via CloudTrail) to the SNS topic.
-#
-# Deployment:
-#   - Deploy as a StackSet to all accounts and regions you want to monitor.
-#   - When deploying, specify the notification email, phone number, and Slack webhook.
-#   - After deployment, confirm the SNS subscription(s) to start receiving alerts.
-#
-# Use Cases:
-#   - Organization-wide security alerting for GuardDuty, Health, and root sign-ins.
-#   - Centralized notification for security and operations teams.
-# ---------------------------------------------------------------------------------
-
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   EventBridge rules and SNS topic for GuardDuty, AWS Health Dashboard, and root user sign-in notifications in all organization accounts.
@@ -41,12 +23,14 @@ Parameters:
     NoEcho: true
 
 Resources:
+  # SNS Topic for Notifications
   GuardDutyHealthSNSTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub iv-edd-${AWS::AccountId}-guardduty-health-notifications-${AWS::Region}
       KmsMasterKeyId: alias/aws/sns
 
+  # SNS Subscriptions
   GuardDutyHealthSNSSubscriptionEmail:
     Type: AWS::SNS::Subscription
     Properties:
@@ -79,7 +63,7 @@ Resources:
     Properties:
       FunctionName: !Sub iv-edd-${AWS::AccountId}-SlackNotificationFormatter-${AWS::Region}
       Description: Formats SNS notifications for Slack
-      Runtime: python3.9
+      Runtime: python3.12
       Handler: index.lambda_handler
       MemorySize: 128
       Timeout: 10
@@ -128,7 +112,7 @@ Resources:
                       "body": f"Error processing alert: {str(e)}"
                   }
 
-
+  # Lambda IAM Role
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Condition: HasSlackWebhook
@@ -143,7 +127,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
-  # Subscription that uses Lambda for better Slack formatting
+  # Lambda Subscription Permission
   LambdaSubscriptionPermission:
     Type: AWS::Lambda::Permission
     Condition: HasSlackWebhook
@@ -161,6 +145,33 @@ Resources:
       Endpoint: !GetAtt SlackNotificationLambda.Arn
       TopicArn: !Ref GuardDutyHealthSNSTopic
 
+  # ==============================
+  # EventBridge Execution Role
+  # ==============================
+  EventBridgeExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub iv-edd-${AWS::AccountId}-EventBridgeToSNS-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SNSPublishPermission
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - sns:Publish
+                Resource: !Ref GuardDutyHealthSNSTopic
+
+  # ==============================
+  # EventBridge Rules
+  # ==============================
   GuardDutyFindingRule:
     Type: AWS::Events::Rule
     Properties:
@@ -174,6 +185,7 @@ Resources:
       Targets:
         - Arn: !Ref GuardDutyHealthSNSTopic
           Id: GuardDutySNSTarget
+          RoleArn: !GetAtt EventBridgeExecutionRole.Arn
 
   HealthDashboardRule:
     Type: AWS::Events::Rule
@@ -186,6 +198,7 @@ Resources:
       Targets:
         - Arn: !Ref GuardDutyHealthSNSTopic
           Id: HealthSNSTarget
+          RoleArn: !GetAtt EventBridgeExecutionRole.Arn
 
   RootUserSignInRule:
     Type: AWS::Events::Rule
@@ -206,7 +219,9 @@ Resources:
       Targets:
         - Arn: !Ref GuardDutyHealthSNSTopic
           Id: RootUserSignInSNSTarget
+          RoleArn: !GetAtt EventBridgeExecutionRole.Arn
 
+  # SNS Topic Policy
   SNSTopicPolicy:
     Type: AWS::SNS::TopicPolicy
     Properties:
@@ -234,3 +249,6 @@ Outputs:
   SlackNotificationLambdaArn:
     Description: ARN of the Slack notification Lambda function (if deployed)
     Value: !If [HasSlackWebhook, !GetAtt SlackNotificationLambda.Arn, "No Slack webhook provided"]
+  EventBridgeExecutionRoleArn:
+    Description: ARN of the EventBridge execution role
+    Value: !GetAtt EventBridgeExecutionRole.Arn
