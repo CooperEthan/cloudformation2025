@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  CloudWatch Log Group monitoring for root user sign-in events with SNS notifications.
+  CloudWatch Log Group monitoring for root user sign-in events and MFA removal events with SNS notifications.
   Monitors CloudTrail logs stored in CloudWatch Log Groups across the organization.
 
 Parameters:
@@ -28,28 +28,27 @@ Parameters:
     NoEcho: true
 
 Resources:
-  # SNS Topic for Root Sign-in Notifications
-  RootSignInSNSTopic:
+  # SNS Topic for Root Sign-in and MFA Notifications
+  RootSecuritySNSTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Sub iv-edd-${AWS::AccountId}-root-signin-notifications-${AWS::Region}
-      KmsMasterKeyId: alias/aws/sns
+      TopicName: !Sub iv-edd-${AWS::AccountId}-root-security-notifications-${AWS::Region}
 
   # SNS Subscriptions
-  RootSignInSNSSubscriptionEmail:
+  RootSecuritySNSSubscriptionEmail:
     Type: AWS::SNS::Subscription
     Properties:
       Protocol: email
       Endpoint: !Ref NotificationEmail
-      TopicArn: !Ref RootSignInSNSTopic
+      TopicArn: !Ref RootSecuritySNSTopic
 
-  RootSignInSNSSubscriptionSMS:
+  RootSecuritySNSSubscriptionSMS:
     Type: AWS::SNS::Subscription
     Condition: HasPhoneNumber
     Properties:
       Protocol: sms
       Endpoint: !Ref NotificationPhone
-      TopicArn: !Ref RootSignInSNSTopic
+      TopicArn: !Ref RootSecuritySNSTopic
 
   # ==============================
   # Slack Notification Processor
@@ -58,8 +57,8 @@ Resources:
     Type: AWS::Lambda::Function
     Condition: HasSlackWebhook
     Properties:
-      FunctionName: !Sub iv-edd-${AWS::AccountId}-RootSignInSlackNotifier-${AWS::Region}
-      Description: Formats root sign-in alerts for Slack
+      FunctionName: !Sub iv-edd-${AWS::AccountId}-RootSecuritySlackNotifier-${AWS::Region}
+      Description: Formats root security alerts for Slack
       Runtime: python3.12
       Handler: index.lambda_handler
       MemorySize: 128
@@ -78,29 +77,71 @@ Resources:
           def lambda_handler(event, context):
               try:
                   http = urllib3.PoolManager()
-                  slack_webhook_url = os.environ['SlackWebhookURL']
+                  slack_webhook_url = os.environ.get('SlackWebhookURL')
                   
-                  # Parse SNS message - this will be from CloudWatch Alarm
-                  sns_message = json.loads(event['Records'][0]['Sns']['Message'])
+                  if not slack_webhook_url:
+                      print("No Slack webhook URL configured")
+                      return {"statusCode": 200, "body": "No Slack webhook configured"}
                   
-                  # Extract alarm details
-                  alarm_name = sns_message.get('AlarmName', 'Unknown Alarm')
-                  reason = sns_message.get('NewStateReason', 'Root user sign-in detected')
-                  timestamp = sns_message.get('StateChangeTime', 'Unknown')
+                  # Parse SNS message
+                  sns_record = event['Records'][0]['Sns']
+                  message_str = sns_record['Message']
                   
-                  slack_message = {
-                      "text": ":warning: *AWS ROOT USER SIGN-IN DETECTED* :warning:",
-                      "attachments": [{
-                          "color": "#ff0000",
-                          "fields": [
-                              {"title": "Alarm", "value": alarm_name, "short": True},
-                              {"title": "Time", "value": timestamp, "short": True},
-                              {"title": "Reason", "value": reason, "short": False}
-                          ],
-                          "footer": "AWS Security Alert",
-                          "ts": int(datetime.now().timestamp())
-                      }]
-                  }
+                  print(f"Received SNS message: {message_str}")
+                  
+                  # Try to parse as CloudWatch alarm JSON, fall back to plain text
+                  try:
+                      sns_message = json.loads(message_str)
+                      # This is a CloudWatch alarm
+                      alarm_name = sns_message.get('AlarmName', 'Unknown Alarm')
+                      reason = sns_message.get('NewStateReason', 'Security event detected')
+                      timestamp = sns_message.get('StateChangeTime', 'Unknown')
+                      
+                      # Determine alert type and color based on alarm name
+                      if 'RootUserSignIn' in alarm_name:
+                          alert_type = "ROOT USER SIGN-IN"
+                          color = "#ff6600"  # Orange
+                          emoji = ":warning:"
+                      elif 'RootMFARemoval' in alarm_name:
+                          alert_type = "ROOT MFA REMOVAL"
+                          color = "#ff0000"  # Red
+                          emoji = ":rotating_light:"
+                      else:
+                          alert_type = "SECURITY ALERT"
+                          color = "#ff0000"
+                          emoji = ":warning:"
+                      
+                      slack_message = {
+                          "text": f"{emoji} *AWS {alert_type} DETECTED* {emoji}",
+                          "attachments": [{
+                              "color": color,
+                              "fields": [
+                                  {"title": "Alert Type", "value": alert_type, "short": True},
+                                  {"title": "Time", "value": timestamp, "short": True},
+                                  {"title": "Alarm", "value": alarm_name, "short": False},
+                                  {"title": "Details", "value": reason, "short": False}
+                              ],
+                              "footer": "AWS Security Alert System",
+                              "ts": int(datetime.now().timestamp())
+                          }]
+                      }
+                  
+                  except json.JSONDecodeError:
+                      # This is a plain text message (like test messages)
+                      slack_message = {
+                          "text": ":information_source: *AWS Notification Test*",
+                          "attachments": [{
+                              "color": "#36a64f",
+                              "fields": [
+                                  {"title": "Subject", "value": sns_record.get('Subject', 'Test Message'), "short": True},
+                                  {"title": "Message", "value": message_str, "short": False}
+                              ],
+                              "footer": "AWS SNS Test",
+                              "ts": int(datetime.now().timestamp())
+                          }]
+                      }
+                  
+                  print(f"Sending Slack message: {json.dumps(slack_message)}")
                   
                   response = http.request(
                       'POST',
@@ -109,6 +150,7 @@ Resources:
                       headers={'Content-Type': 'application/json'}
                   )
                   
+                  print(f"Slack response status: {response.status}")
                   return {"statusCode": response.status}
                   
               except Exception as e:
@@ -139,21 +181,24 @@ Resources:
     Condition: HasSlackWebhook
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !GetAtt SlackNotificationLambda.Arn
+      FunctionName: !Ref SlackNotificationLambda
       Principal: sns.amazonaws.com
-      SourceArn: !Ref RootSignInSNSTopic
+      SourceArn: !Ref RootSecuritySNSTopic
 
-  RootSignInSNSSubscriptionLambda:
+  RootSecuritySNSSubscriptionLambda:
     Type: AWS::SNS::Subscription
     Condition: HasSlackWebhook
+    DependsOn: LambdaSubscriptionPermission
     Properties:
       Protocol: lambda
       Endpoint: !GetAtt SlackNotificationLambda.Arn
-      TopicArn: !Ref RootSignInSNSTopic
+      TopicArn: !Ref RootSecuritySNSTopic
 
   # ==============================
-  # CloudWatch Log Metric Filter
+  # CloudWatch Log Metric Filters
   # ==============================
+  
+  # Root User Sign-In Metric Filter
   RootUserSignInMetricFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
@@ -166,9 +211,24 @@ Resources:
           MetricValue: "1"
           DefaultValue: 0
 
+  # Root User MFA Removal Metric Filter
+  RootUserMFARemovalMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref CloudWatchLogGroupName
+      FilterName: !Sub iv-edd-${AWS::AccountId}-RootMFARemovalFilter-${AWS::Region}
+      FilterPattern: '{ ($.eventName = "DeactivateMFADevice" || $.eventName = "DeleteVirtualMFADevice") && $.userIdentity.type = "Root" }'
+      MetricTransformations:
+        - MetricNamespace: "Security/RootAccess"
+          MetricName: "RootMFARemovalEvents"
+          MetricValue: "1"
+          DefaultValue: 0
+
   # ==============================
-  # CloudWatch Alarm
+  # CloudWatch Alarms
   # ==============================
+  
+  # Root User Sign-In Alarm
   RootUserSignInAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -177,20 +237,43 @@ Resources:
       MetricName: "RootUserSignInEvents"
       Namespace: "Security/RootAccess"
       Statistic: Sum
-      Period: 300
+      Period: 60
       EvaluationPeriods: 1
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       AlarmActions:
-        - !Ref RootSignInSNSTopic
+        - !Ref RootSecuritySNSTopic
+      OKActions:
+        - !Ref RootSecuritySNSTopic
       TreatMissingData: notBreaching
+      DatapointsToAlarm: 1
+
+  # Root User MFA Removal Alarm
+  RootUserMFARemovalAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub iv-edd-${AWS::AccountId}-RootMFARemoval-${AWS::Region}
+      AlarmDescription: "CRITICAL: Root user MFA device has been removed or deactivated"
+      MetricName: "RootMFARemovalEvents"
+      Namespace: "Security/RootAccess"
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref RootSecuritySNSTopic
+      OKActions:
+        - !Ref RootSecuritySNSTopic
+      TreatMissingData: notBreaching
+      DatapointsToAlarm: 1
 
   # SNS Topic Policy
   SNSTopicPolicy:
     Type: AWS::SNS::TopicPolicy
     Properties:
       Topics:
-        - !Ref RootSignInSNSTopic
+        - !Ref RootSecuritySNSTopic
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -198,7 +281,7 @@ Resources:
             Principal:
               Service: cloudwatch.amazonaws.com
             Action: "sns:Publish"
-            Resource: !Ref RootSignInSNSTopic
+            Resource: !Ref RootSecuritySNSTopic
 
 Conditions:
   HasSlackWebhook: !Not [!Equals [!Ref SlackWebhookURL, ""]]
@@ -206,8 +289,8 @@ Conditions:
 
 Outputs:
   SNSTopicArn:
-    Description: SNS topic ARN for root sign-in notifications
-    Value: !Ref RootSignInSNSTopic
+    Description: SNS topic ARN for root security notifications
+    Value: !Ref RootSecuritySNSTopic
     
   CloudWatchLogGroup:
     Description: CloudWatch Log Group being monitored
@@ -220,7 +303,15 @@ Outputs:
   RootSignInAlarmArn:
     Description: ARN of the CloudWatch alarm for root sign-ins
     Value: !GetAtt RootUserSignInAlarm.Arn
+
+  RootMFARemovalAlarmArn:
+    Description: ARN of the CloudWatch alarm for root MFA removal
+    Value: !GetAtt RootUserMFARemovalAlarm.Arn
     
-  MetricFilterName:
+  SignInMetricFilterName:
     Description: Name of the metric filter monitoring root sign-ins
     Value: !Ref RootUserSignInMetricFilter
+
+  MFARemovalMetricFilterName:
+    Description: Name of the metric filter monitoring root MFA removal
+    Value: !Ref RootUserMFARemovalMetricFilter
