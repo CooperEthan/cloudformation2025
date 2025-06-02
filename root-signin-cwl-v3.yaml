@@ -1,0 +1,219 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudWatch Log Group monitoring for root user sign-in events and MFA removal events with SNS notifications.
+
+Parameters:
+  CloudWatchLogGroupName:
+    Type: String
+    Description: Name of the CloudWatch Log Group containing CloudTrail logs (must already exist)
+    Default: CloudTrail/OrganizationTrail
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive notifications.
+  NotificationPhone:
+    Type: String
+    Description: Phone number (in E.164 format, e.g., +1234567890) to receive SMS notifications. Leave blank to skip SMS.
+    Default: ""
+    AllowedPattern: "^$|^\\+[1-9]\\d{1,14}$"
+  SlackWebhookURL:
+    Type: String
+    Description: Slack webhook URL for notifications (leave blank if not using Slack)
+    Default: ""
+    NoEcho: true
+
+Resources:
+  # KMS key for encrypting SNS topic messages
+  SNSEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "KMS key for encrypting root security notifications SNS topic"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal: {AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"}
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Allow services to use the key
+            Effect: Allow
+            Principal: {Service: [cloudwatch.amazonaws.com, sns.amazonaws.com]}
+            Action: ["kms:Decrypt", "kms:GenerateDataKey", "kms:CreateGrant", "kms:DescribeKey"]
+            Resource: "*"
+
+  # Alias for easier reference to the KMS key
+  SNSEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/iv-edd-${AWS::AccountId}-sns-encryption-${AWS::Region}"
+      TargetKeyId: !Ref SNSEncryptionKey
+
+  # SNS topic for sending security alert notifications
+  RootSecuritySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub iv-edd-${AWS::AccountId}-root-security-notifications-${AWS::Region}
+      KmsMasterKeyId: !Ref SNSEncryptionKey
+
+  # Email subscription to receive notifications
+  RootSecuritySNSSubscriptionEmail:
+    Type: AWS::SNS::Subscription
+    Properties: {Protocol: email, Endpoint: !Ref NotificationEmail, TopicArn: !Ref RootSecuritySNSTopic}
+
+  # SMS subscription for mobile notifications (conditional)
+  RootSecuritySNSSubscriptionSMS:
+    Type: AWS::SNS::Subscription
+    Condition: HasPhoneNumber
+    Properties: {Protocol: sms, Endpoint: !Ref NotificationPhone, TopicArn: !Ref RootSecuritySNSTopic}
+
+  # Lambda function to format and send Slack notifications
+  SlackNotificationLambda:
+    Type: AWS::Lambda::Function
+    Condition: HasSlackWebhook
+    Properties:
+      FunctionName: !Sub iv-edd-${AWS::AccountId}-RootSecuritySlackNotifier-${AWS::Region}
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Timeout: 10
+      ReservedConcurrentExecutions: 5
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables: {SlackWebhookURL: !Ref SlackWebhookURL, CloudWatchLogGroupName: !Ref CloudWatchLogGroupName}
+      Code:
+        ZipFile: |
+          import json,urllib3,os,boto3
+          from datetime import datetime,timedelta
+          def lambda_handler(e,c):
+           try:
+            http=urllib3.PoolManager();webhook=os.environ.get('SlackWebhookURL');lg=os.environ.get('CloudWatchLogGroupName')
+            if not webhook:return{"statusCode":200}
+            sns=e['Records'][0]['Sns'];msg=sns['Message'];print(f"SNS: {msg}")
+            try:
+             d=json.loads(msg)
+             if 'AlarmName' in d:
+              an=d.get('AlarmName','');ts=d.get('StateChangeTime','');rg=d.get('Region','us-east-1')
+              sip=ua=et="Unknown";cls=uit=aid=mfa=etm="Unknown"
+              for p in an.split('-'):
+               if p.isdigit()and len(p)==12:aid=p;break
+              if lg and 'RootUserSignIn' in an:
+               try:
+                lc=boto3.client('logs');et=datetime.now();st=et-timedelta(minutes=10)
+                r=lc.filter_log_events(logGroupName=lg,startTime=int(st.timestamp()*1000),endTime=int(et.timestamp()*1000),filterPattern='{ $.eventName = "ConsoleLogin" && $.userIdentity.type = "Root" }')
+                if r['events']:
+                 ct=json.loads(r['events'][-1]['message']);sip=ct.get('sourceIPAddress','Unknown');ua=ct.get('userAgent','Unknown');et=ct.get('eventType','Unknown');etm=ct.get('eventTime','Unknown')
+                 re=ct.get('responseElements',{});cls=re.get('ConsoleLogin','Unknown')if isinstance(re,dict)else'Unknown'
+                 ui=ct.get('userIdentity',{});uit=ui.get('type','Unknown')if isinstance(ui,dict)else'Unknown'
+                 if aid=="Unknown"and isinstance(ui,dict):aid=ui.get('accountId','Unknown')
+                 ad=ct.get('additionalEventData',{});mfa=ad.get('MFAUsed','Unknown')if isinstance(ad,dict)else'Unknown'
+               except Exception as ex:print(f"Log error: {ex}")
+              at="ROOT USER SIGN-IN";emoji=":warning:";clr="#ff6600";urg="HIGH"
+              if 'RootMFARemoval' in an:at="ROOT MFA REMOVAL";emoji=":rotating_light:";clr="#ff0000";urg="CRITICAL"
+              if len(ua)>80:ua=ua[:77]+"..."
+              sm={"text":f"{emoji} *AWS {at} DETECTED* {emoji}","attachments":[{"color":clr,"fields":[{"title":"🚨 Alert Type","value":at,"short":True},{"title":"⚠️ Urgency","value":urg,"short":True},{"title":"🏢 Account ID","value":aid,"short":True},{"title":"🌍 Region","value":rg,"short":True},{"title":"👤 User Identity","value":uit,"short":True},{"title":"✅ Login Status","value":cls,"short":True},{"title":"🌐 Source IP","value":sip,"short":True},{"title":"🔐 MFA Used","value":mfa,"short":True},{"title":"📱 Event Type","value":et,"short":True},{"title":"⏰ Event Time","value":etm,"short":True},{"title":"🖥️ User Agent","value":ua,"short":False},{"title":"🔍 Next Steps","value":"• Verify this was authorized access\n• Review account activity immediately\n• Check for any unauthorized changes\n• Ensure MFA remains enabled","short":False}],"footer":"AWS Security Alert System | Investigate immediately","ts":int(datetime.now().timestamp())}]}
+             else:sm={"text":"AWS Event","attachments":[{"color":"#36a64f","fields":[{"title":"Event","value":str(d)[:500],"short":False}]}]}
+            except:sm={"text":"AWS Test","attachments":[{"color":"#36a64f","fields":[{"title":"Message","value":msg[:500],"short":False}]}]}
+            r=http.request('POST',webhook,body=json.dumps(sm),headers={'Content-Type':'application/json'});return{"statusCode":r.status}
+           except Exception as ex:print(f"Error: {ex}");return{"statusCode":500}
+
+  # IAM role for Lambda to access CloudWatch Logs
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: HasSlackWebhook
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole']
+      Policies:
+        - PolicyName: CloudWatchLogsReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: [{Effect: Allow, Action: ['logs:FilterLogEvents','logs:DescribeLogGroups','logs:DescribeLogStreams'], Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${CloudWatchLogGroupName}:*"}]
+
+  # Permission for SNS to invoke the Lambda function
+  LambdaSubscriptionPermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasSlackWebhook
+    Properties: {Action: 'lambda:InvokeFunction', FunctionName: !Ref SlackNotificationLambda, Principal: 'sns.amazonaws.com', SourceArn: !Ref RootSecuritySNSTopic}
+
+  # Lambda subscription to receive SNS notifications
+  RootSecuritySNSSubscriptionLambda:
+    Type: AWS::SNS::Subscription
+    Condition: HasSlackWebhook
+    DependsOn: LambdaSubscriptionPermission
+    Properties: {Protocol: lambda, Endpoint: !GetAtt SlackNotificationLambda.Arn, TopicArn: !Ref RootSecuritySNSTopic}
+
+  # Metric filter to detect root user console sign-ins
+  RootUserSignInMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref CloudWatchLogGroupName
+      FilterName: !Sub iv-edd-${AWS::AccountId}-RootUserSignInFilter-${AWS::Region}
+      FilterPattern: '{ $.eventName = "ConsoleLogin" && $.userIdentity.type = "Root" }'
+      MetricTransformations: [{MetricNamespace: "Security/RootAccess", MetricName: "RootUserSignInEvents", MetricValue: "1", DefaultValue: 0}]
+
+  # Metric filter to detect root user MFA device removal
+  RootUserMFARemovalMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref CloudWatchLogGroupName
+      FilterName: !Sub iv-edd-${AWS::AccountId}-RootMFARemovalFilter-${AWS::Region}
+      FilterPattern: '{ ($.eventName = "DeactivateMFADevice" || $.eventName = "DeleteVirtualMFADevice") && $.userIdentity.type = "Root" }'
+      MetricTransformations: [{MetricNamespace: "Security/RootAccess", MetricName: "RootMFARemovalEvents", MetricValue: "1", DefaultValue: 0}]
+
+  # CloudWatch alarm triggered by root user sign-ins
+  RootUserSignInAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alarm when root user signs into AWS Console"
+      MetricName: "RootUserSignInEvents"
+      Namespace: "Security/RootAccess"
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions: [!Ref RootSecuritySNSTopic]
+      OKActions: [!Ref RootSecuritySNSTopic]
+      TreatMissingData: notBreaching
+      DatapointsToAlarm: 1
+
+  # CloudWatch alarm triggered by root MFA removal events
+  RootUserMFARemovalAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "CRITICAL: Root user MFA device has been removed or deactivated"
+      MetricName: "RootMFARemovalEvents"
+      Namespace: "Security/RootAccess"
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions: [!Ref RootSecuritySNSTopic]
+      OKActions: [!Ref RootSecuritySNSTopic]
+      TreatMissingData: notBreaching
+      DatapointsToAlarm: 1
+
+  # Policy allowing CloudWatch to publish to the SNS topic
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref RootSecuritySNSTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: cloudwatch.amazonaws.com}, Action: "sns:Publish", Resource: !Ref RootSecuritySNSTopic}]
+
+Conditions:
+  HasSlackWebhook: !Not [!Equals [!Ref SlackWebhookURL, ""]]
+  HasPhoneNumber: !Not [!Equals [!Ref NotificationPhone, ""]]
+
+Outputs:
+  SNSTopicArn: {Description: "SNS topic ARN for root security notifications", Value: !Ref RootSecuritySNSTopic}
+  CloudWatchLogGroup: {Description: "CloudWatch Log Group being monitored", Value: !Ref CloudWatchLogGroupName}
+  SlackNotificationLambdaArn: {Description: "ARN of the Slack notification Lambda function (if deployed)", Value: !If [HasSlackWebhook, !GetAtt SlackNotificationLambda.Arn, "No Slack webhook provided"]}
+  RootSignInAlarmArn: {Description: "ARN of the CloudWatch alarm for root sign-ins", Value: !GetAtt RootUserSignInAlarm.Arn}
+  RootMFARemovalAlarmArn: {Description: "ARN of the CloudWatch alarm for root MFA removal", Value: !GetAtt RootUserMFARemovalAlarm.Arn}
+  SignInMetricFilterName: {Description: "Name of the metric filter monitoring root sign-ins", Value: !Ref RootUserSignInMetricFilter}
+  MFARemovalMetricFilterName: {Description: "Name of the metric filter monitoring root MFA removal", Value: !Ref RootUserMFARemovalMetricFilter}
