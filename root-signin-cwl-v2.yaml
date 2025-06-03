@@ -31,6 +31,7 @@ Resources:
   # KMS Key for SNS Topic Encryption
   SNSEncryptionKey:
     Type: AWS::KMS::Key
+    DeletionPolicy: Retain
     Properties:
       Description: "KMS key for encrypting root security notifications SNS topic"
       EnableKeyRotation: true
