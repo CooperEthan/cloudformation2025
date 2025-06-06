@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudWatch Log Group monitoring for root user console sign-in events with SNS notifications.
+
+Parameters:
+  CloudWatchLogGroupName:
+    Type: String
+    Description: Name of the CloudWatch Log Group containing CloudTrail logs (must already exist)
+    Default: aws-controltower/CloudTrailLogs
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive notifications.
+  NotificationPhone:
+    Type: String
+    Description: Phone number (in E.164 format, e.g., +1234567890) to receive SMS notifications. Leave blank to skip SMS.
+    Default: ""
+    AllowedPattern: "^$|^\\+[1-9]\\d{1,14}$"
+  SlackWebhookURL:
+    Type: String
+    Description: Slack webhook URL for notifications (leave blank if not using Slack)
+    Default: ""
+    NoEcho: true
+  ExistingKMSKeyArn:
+    Type: String
+    Description: ARN of existing KMS key for SNS topic encryption
+    Default: arn:aws:kms:us-east-1:049840881490:key/e2a1da46-c54f-4b36-a376-d6d70168c5fe
+
+Resources:
+  # SNS topic for sending security alert notifications
+  RootUserSecuritySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub iv-edd-${AWS::AccountId}-root-user-security-notifications-${AWS::Region}
+      KmsMasterKeyId: !Ref ExistingKMSKeyArn
+
+  # Email subscription to receive notifications
+  RootUserSecuritySNSSubscriptionEmail:
+    Type: AWS::SNS::Subscription
+    Properties: {Protocol: email, Endpoint: !Ref NotificationEmail, TopicArn: !Ref RootUserSecuritySNSTopic}
+
+  # SMS subscription for mobile notifications (conditional)
+  RootUserSecuritySNSSubscriptionSMS:
+    Type: AWS::SNS::Subscription
+    Condition: HasPhoneNumber
+    Properties: {Protocol: sms, Endpoint: !Ref NotificationPhone, TopicArn: !Ref RootUserSecuritySNSTopic}
+
+  # Lambda function to format and send Slack notifications
+  SlackNotificationLambda:
+    Type: AWS::Lambda::Function
+    Condition: HasSlackWebhook
+    Properties:
+      FunctionName: !Sub iv-edd-${AWS::AccountId}-RootUserSecuritySlackNotifier-${AWS::Region}
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Timeout: 10
+      ReservedConcurrentExecutions: 5
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables: {SlackWebhookURL: !Ref SlackWebhookURL, CloudWatchLogGroupName: !Ref CloudWatchLogGroupName}
+      Code:
+        ZipFile: |
+          import json,urllib3,os,boto3
+          from datetime import datetime,timedelta
+          def lambda_handler(e,c):
+           try:
+            http=urllib3.PoolManager()
+            webhook=os.environ.get('SlackWebhookURL')
+            lg=os.environ.get('CloudWatchLogGroupName')
+            if not webhook:return{"statusCode":200}
+            sns=e['Records'][0]['Sns']
+            msg=sns['Message']
+            print(f"SNS: {msg}")
+            try:
+             d=json.loads(msg)
+             if 'AlarmName' in d:
+              an=d.get('AlarmName','')
+              ts=d.get('StateChangeTime','')
+              rg=d.get('Region','us-east-1')
+              sip=ua=et="Unknown"
+              aid=login_status=mfa_used=mfa_identifier="Unknown"
+              for p in an.split('-'):
+               if p.isdigit()and len(p)==12:
+                aid=p
+                break
+              if lg and 'RootUserConsoleLogin' in an:
+               try:
+                lc=boto3.client('logs')
+                et_now=datetime.now()
+                st=et_now-timedelta(minutes=10)
+                r=lc.filter_log_events(logGroupName=lg,startTime=int(st.timestamp()*1000),endTime=int(et_now.timestamp()*1000),filterPattern='{ $.eventName = "ConsoleLogin" && $.userIdentity.type = "Root" }')
+                if r['events']:
+                 ct=json.loads(r['events'][-1]['message'])
+                 sip=ct.get('sourceIPAddress','Unknown')
+                 ua=ct.get('userAgent','Unknown')
+                 et=ct.get('eventTime','Unknown')
+                 ui=ct.get('userIdentity',{})
+                 if isinstance(ui,dict):
+                  root_arn=ui.get('arn','Unknown')
+                  principal_id=ui.get('principalId','Unknown')
+                 else:
+                  root_arn='Unknown'
+                  principal_id='Unknown'
+                 re=ct.get('responseElements',{})
+                 if isinstance(re,dict):
+                  login_status=re.get('ConsoleLogin','Unknown')
+                 else:
+                  login_status='Unknown'
+                 ad=ct.get('additionalEventData',{})
+                 if isinstance(ad,dict):
+                  mfa_used=ad.get('MFAUsed','Unknown')
+                  mfa_identifier=ad.get('MFAIdentifier','Unknown')
+                  login_to=ad.get('LoginTo','Unknown')
+                 else:
+                  mfa_used='Unknown'
+                  mfa_identifier='Unknown'
+                  login_to='Unknown'
+                 ri=ct.get('recipientAccountId','Unknown')
+                 if aid=="Unknown":
+                  aid=ri
+               except Exception as ex:
+                print(f"Log error: {ex}")
+              at="ROOT USER CONSOLE LOGIN"
+              emoji=":rotating_light:"
+              clr="#ff0000"
+              urg="CRITICAL"
+              if len(ua)>80:
+               ua=ua[:77]+"..."
+              if len(mfa_identifier)>80:
+               mfa_identifier=mfa_identifier[:77]+"..."
+              sm={"text":f"{emoji} *AWS {at} DETECTED* {emoji}","attachments":[{"color":clr,"fields":[{"title":"🚨 Alert Type","value":at,"short":True},{"title":"⚠️ Urgency","value":urg,"short":True},{"title":"🏢 Account ID","value":aid,"short":True},{"title":"🌍 Region","value":rg,"short":True},{"title":"👑 Root ARN","value":root_arn,"short":True},{"title":"🆔 Principal ID","value":principal_id,"short":True},{"title":"🌐 Source IP","value":sip,"short":True},{"title":"✅ Login Status","value":login_status,"short":True},{"title":"🔐 MFA Used","value":mfa_used,"short":True},{"title":"🔑 MFA Device","value":mfa_identifier,"short":True},{"title":"⏰ Event Time","value":et,"short":True},{"title":"🖥️ User Agent","value":ua,"short":False},{"title":"🔍 Next Steps","value":"• **IMMEDIATE ACTION REQUIRED**\n• Verify this was authorized root access\n• Review all account activity immediately\n• Check for any unauthorized changes\n• Validate MFA device usage\n• Consider rotating root credentials","short":False}],"footer":"🚨 CRITICAL AWS Security Alert | ROOT USER ACCESS DETECTED","ts":int(datetime.now().timestamp())}]}
+             else:
+              sm={"text":"AWS Event","attachments":[{"color":"#36a64f","fields":[{"title":"Event","value":str(d)[:500],"short":False}]}]}
+            except:
+             sm={"text":"AWS Test","attachments":[{"color":"#36a64f","fields":[{"title":"Message","value":msg[:500],"short":False}]}]}
+            r=http.request('POST',webhook,body=json.dumps(sm),headers={'Content-Type':'application/json'})
+            return{"statusCode":r.status}
+           except Exception as ex:
+            print(f"Error: {ex}")
+            return{"statusCode":500}
+
+  # IAM role for Lambda to access CloudWatch Logs
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: HasSlackWebhook
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole']
+      Policies:
+        - PolicyName: CloudWatchLogsReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: [{Effect: Allow, Action: ['logs:FilterLogEvents','logs:DescribeLogGroups','logs:DescribeLogStreams'], Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${CloudWatchLogGroupName}:*"}]
+
+  # Permission for SNS to invoke the Lambda function
+  LambdaSubscriptionPermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasSlackWebhook
+    Properties: {Action: 'lambda:InvokeFunction', FunctionName: !Ref SlackNotificationLambda, Principal: 'sns.amazonaws.com', SourceArn: !Ref RootUserSecuritySNSTopic}
+
+  # Lambda subscription to receive SNS notifications
+  RootUserSecuritySNSSubscriptionLambda:
+    Type: AWS::SNS::Subscription
+    Condition: HasSlackWebhook
+    DependsOn: LambdaSubscriptionPermission
+    Properties: {Protocol: lambda, Endpoint: !GetAtt SlackNotificationLambda.Arn, TopicArn: !Ref RootUserSecuritySNSTopic}
+
+  # Metric filter to detect root user console logins
+  RootUserConsoleLoginMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref CloudWatchLogGroupName
+      FilterName: !Sub iv-edd-${AWS::AccountId}-RootUserConsoleLoginFilter-${AWS::Region}
+      FilterPattern: '{ $.eventName = "ConsoleLogin" && $.userIdentity.type = "Root" }'
+      MetricTransformations: [{MetricNamespace: "Security/RootAccess", MetricName: "RootUserConsoleLoginEvents", MetricValue: "1", DefaultValue: 0}]
+
+  # CloudWatch alarm triggered by root user console logins
+  RootUserConsoleLoginAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub iv-edd-${AWS::AccountId}-RootUserConsoleLogin-${AWS::Region}
+      AlarmDescription: "CRITICAL: Root user has logged into AWS Console"
+      MetricName: "RootUserConsoleLoginEvents"
+      Namespace: "Security/RootAccess"
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions: [!Ref RootUserSecuritySNSTopic]
+      OKActions: [!Ref RootUserSecuritySNSTopic]
+      TreatMissingData: notBreaching
+      DatapointsToAlarm: 1
+
+  # Policy allowing CloudWatch to publish to the SNS topic
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref RootUserSecuritySNSTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: cloudwatch.amazonaws.com}, Action: "sns:Publish", Resource: !Ref RootUserSecuritySNSTopic}]
+
+Conditions:
+  HasSlackWebhook: !Not [!Equals [!Ref SlackWebhookURL, ""]]
+  HasPhoneNumber: !Not [!Equals [!Ref NotificationPhone, ""]]
+
+Outputs:
+  SNSTopicArn: {Description: "SNS topic ARN for root user security notifications", Value: !Ref RootUserSecuritySNSTopic}
+  CloudWatchLogGroup: {Description: "CloudWatch Log Group being monitored", Value: !Ref CloudWatchLogGroupName}
+  ExistingKMSKeyArn: {Description: "ARN of the existing KMS key used for encryption", Value: !Ref ExistingKMSKeyArn}
+  SlackNotificationLambdaArn: {Description: "ARN of the Slack notification Lambda function (if deployed)", Value: !If [HasSlackWebhook, !GetAtt SlackNotificationLambda.Arn, "No Slack webhook provided"]}
+  RootUserAlarmArn: {Description: "ARN of the CloudWatch alarm for root user console logins", Value: !GetAtt RootUserConsoleLoginAlarm.Arn}
+  RootUserMetricFilterName: {Description: "Name of the metric filter monitoring root user console logins", Value: !Ref RootUserConsoleLoginMetricFilter}
