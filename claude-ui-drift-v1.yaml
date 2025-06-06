@@ -1,0 +1,735 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation Stack Drift Detection and Notification Solution'
+
+Parameters:
+  ScheduleExpression:
+    Type: String
+    Default: 'rate(1 hour)'
+    Description: 'Schedule for drift detection checks (e.g., rate(1 day), rate(1 hour))'
+  EmailAddress:
+    Type: String
+    Description: 'Email address to receive drift notifications'
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+  SlackWebhookUrl:
+    Type: String
+    Description: 'Slack webhook URL for notifications'
+    NoEcho: true
+  MonitorAllStacks:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: 'Set to true to monitor all stacks'
+  MonitorAllStackSets:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: 'Set to true to monitor all stack sets'
+  StacksToMonitor:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: 'Comma-separated list of CloudFormation stack names to monitor (ignored if MonitorAllStacks is true)'
+  OrganizationsAccessRole:
+    Type: String
+    Default: ''
+    Description: 'ARN of the IAM role that allows access to AWS Organizations resources (leave blank to use default OrganizationAccountAccessRole)'
+  ManagementAccountId:
+    Type: String
+    Default: ''
+    Description: 'AWS Account ID of the Organizations management account'
+
+Conditions:
+  HasOrganizationsRole: !Not [!Equals [!Ref OrganizationsAccessRole, '']]
+  HasManagementAccountId: !Not [!Equals [!Ref ManagementAccountId, '']]
+  MonitoringAllStacks: !Equals [!Ref MonitorAllStacks, 'true']
+  MonitoringAllStackSets: !Equals [!Ref MonitorAllStackSets, 'true']
+
+Resources:
+  DriftNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: CFN-Drift-Notifications
+      TopicName: CFN-Drift-Notifications
+  
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref DriftNotificationTopic
+      Protocol: email
+      Endpoint: !Ref EmailAddress
+  
+  DriftDetectionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CloudFormationDriftDetectionPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:DetectStackDrift
+                  - cloudformation:DetectStackResourceDrift
+                  - cloudformation:DescribeStackDriftDetectionStatus
+                  - cloudformation:DescribeStackResourceDrifts
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStacks
+                  - cloudformation:ListStackSets
+                  - cloudformation:ListStackInstances
+                  - cloudformation:DetectStackSetDrift
+                  - cloudformation:DescribeStackSet
+                  - cloudformation:DescribeStackSetOperation
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                  - sns:GetTopicAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:ListTagsForResource
+                Resource: !Ref DriftNotificationTopic
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - lambda:GetFunction
+                  - lambda:GetPolicy
+                  - lambda:ListTags
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:GetBucketPolicy
+                  - s3:GetBucketTagging
+                  - s3:ListBucketVersions
+                  - dynamodb:DescribeTable
+                  - dynamodb:ListTagsOfResource
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeInstances
+                  - logs:DescribeLogGroups
+                  - logs:ListTagsLogGroup
+                  - events:DescribeRule
+                  - events:ListTargetsByRule
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - organizations:DescribeOrganizationalUnit
+                  - organizations:DescribeOrganization
+                  - organizations:ListOrganizationalUnitsForParent
+                  - organizations:ListChildren
+                  - organizations:ListParents
+                  - organizations:ListTagsForResource
+                  - organizations:DescribeAccount
+                  - organizations:ListAccounts
+                  - organizations:ListRoots
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: !If 
+                  - HasOrganizationsRole
+                  - !Ref OrganizationsAccessRole
+                  - !Sub arn:aws:iam::*:role/OrganizationAccountAccessRole
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DriftDetectionLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DriftDetectionScheduleRule.Arn
+
+  CreateJsonArrayLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !GetAtt DriftDetectionLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+          
+          def handler(event, context):
+              responseData = {}
+              
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                      return
+                  
+                  # Get the comma-delimited list from the event
+                  stacks_list = event['ResourceProperties']['StacksList']
+                  
+                  # Convert to a valid JSON array string
+                  json_array = json.dumps(stacks_list)
+                  
+                  responseData['JsonArray'] = json_array
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(e)})
+
+  StacksToMonitorJsonArray:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: CreateJsonArrayLambda
+    Properties:
+      ServiceToken: !GetAtt CreateJsonArrayLambda.Arn
+      StacksList: !Ref StacksToMonitor
+
+  DriftDetectionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CloudFormationDriftDetector
+      Description: Detects drift in CloudFormation stacks and sends notifications
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt DriftDetectionLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          SNS_TOPIC: !Ref DriftNotificationTopic
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+          MANAGEMENT_ACCOUNT_ID: !If [HasManagementAccountId, !Ref ManagementAccountId, '']
+          MONITOR_ALL_STACKS: !Ref MonitorAllStacks
+          MONITOR_ALL_STACKSETS: !Ref MonitorAllStackSets
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+          import time
+          from datetime import datetime
+          import urllib.request
+
+          def send_to_slack(message, subject):
+              """
+              Send a notification to Slack using standard library (no requests library needed)
+              """
+              # Your Slack webhook URL - store this in environment variables
+              webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+              
+              if not webhook_url:
+                  print("No Slack webhook URL configured")
+                  return
+              
+              slack_message = {
+                  "text": subject,
+                  "blocks": [
+                      {
+                          "type": "header",
+                          "text": {
+                              "type": "plain_text",
+                              "text": subject
+                          }
+                      },
+                      {
+                          "type": "section",
+                          "text": {
+                              "type": "mrkdwn",
+                              "text": f"```{json.dumps(message, indent=2)}```"
+                          }
+                      }
+                  ]
+              }
+              
+              try:
+                  # Convert the message to bytes
+                  data = json.dumps(slack_message).encode('utf-8')
+                  
+                  # Create a request object
+                  req = urllib.request.Request(
+                      webhook_url,
+                      data=data,
+                      headers={'Content-Type': 'application/json'}
+                  )
+                  
+                  # Send the request
+                  with urllib.request.urlopen(req) as response:
+                      response_body = response.read().decode('utf-8')
+                      print(f"Slack response: {response_body}")
+              
+              except Exception as e:
+                  print(f"Exception when sending to Slack: {str(e)}")
+
+          def get_organizations_client():
+              """
+              Get an AWS Organizations client, potentially using a cross-account role
+              """
+              # First try to access Organizations directly
+              try:
+                  org_client = boto3.client('organizations')
+                  # Test the client with a simple call
+                  org_client.describe_organization()
+                  return org_client
+              except Exception as e:
+                  print(f"Direct Organizations access failed: {str(e)}")
+                  
+                  # Try to assume the OrganizationAccountAccessRole
+                  try:
+                      management_account_id = os.environ.get('MANAGEMENT_ACCOUNT_ID', '')
+                      if not management_account_id:
+                          print("Management account ID not provided, cannot assume role")
+                          return boto3.client('organizations')
+                          
+                      sts_client = boto3.client('sts')
+                      assumed_role = sts_client.assume_role(
+                          RoleArn=f"arn:aws:iam::{management_account_id}:role/OrganizationAccountAccessRole",
+                          RoleSessionName="DriftDetectionLambda"
+                      )
+                      
+                      credentials = assumed_role['Credentials']
+                      
+                      # Create a new Organizations client with the assumed role credentials
+                      org_client = boto3.client(
+                          'organizations',
+                          aws_access_key_id=credentials['AccessKeyId'],
+                          aws_secret_access_key=credentials['SecretAccessKey'],
+                          aws_session_token=credentials['SessionToken']
+                      )
+                      
+                      return org_client
+                  except Exception as e2:
+                      print(f"Failed to assume role for Organizations access: {str(e2)}")
+                      # Return a regular client - operations will fail if permissions aren't correct
+                      return boto3.client('organizations')
+
+          def get_all_stacks():
+              """
+              List all CloudFormation stacks in the account
+              """
+              cf_client = boto3.client('cloudformation')
+              stacks = []
+              
+              try:
+                  # Use paginator to handle large numbers of stacks
+                  paginator = cf_client.get_paginator('list_stacks')
+                  
+                  # Filter for stacks that are in a stable state (not in progress or failed)
+                  for page in paginator.paginate(
+                      StackStatusFilter=[
+                          'CREATE_COMPLETE', 
+                          'UPDATE_COMPLETE', 
+                          'ROLLBACK_COMPLETE', 
+                          'UPDATE_ROLLBACK_COMPLETE',
+                          'IMPORT_COMPLETE'
+                      ]
+                  ):
+                      for stack in page['StackSummaries']:
+                          stacks.append(stack['StackName'])
+                  
+                  return stacks
+              except Exception as e:
+                  print(f"Error listing stacks: {str(e)}")
+                  return []
+
+          def get_all_stacksets():
+              """
+              List all CloudFormation stack sets in the account
+              """
+              cf_client = boto3.client('cloudformation')
+              stacksets = []
+              
+              try:
+                  # Use paginator to handle large numbers of stack sets
+                  paginator = cf_client.get_paginator('list_stack_sets')
+                  
+                  for page in paginator.paginate(Status='ACTIVE'):
+                      for stackset in page['Summaries']:
+                          stacksets.append(stackset['StackSetName'])
+                  
+                  return stacksets
+              except Exception as e:
+                  print(f"Error listing stack sets: {str(e)}")
+                  return []
+
+          def check_stack_drift(stack_name):
+              """
+              Check a single stack for drift
+              """
+              # Extract region from stack name if provided in format "stackname:region"
+              region = None
+              if ":" in stack_name:
+                  stack_name, region = stack_name.split(":", 1)
+              
+              # Clients
+              cf = boto3.client('cloudformation', region_name=region)
+              sns = boto3.client('sns')
+              
+              # Get Organizations client for resources that might need it
+              org_client = get_organizations_client()
+              
+              # Get SNS topic from environment variable
+              sns_topic = os.environ.get('SNS_TOPIC')
+              if not sns_topic:
+                  print("Warning: SNS_TOPIC environment variable not set")
+              
+              try:
+                  print(f"Starting drift detection for stack: {stack_name}")
+                  
+                  # Detect drift
+                  drift_id = cf.detect_stack_drift(StackName=stack_name)['StackDriftDetectionId']
+                  print(f"Drift detection initiated with ID: {drift_id}")
+                  
+                  # Wait for completion
+                  while True:
+                      status = cf.describe_stack_drift_detection_status(
+                          StackDriftDetectionId=drift_id
+                      )
+                      detection_status = status['DetectionStatus']
+                      print(f"Current detection status: {detection_status}")
+                      
+                      if detection_status != 'DETECTION_IN_PROGRESS':
+                          break
+                      time.sleep(2)
+                  
+                  # Convert all boto3 response objects to JSON serializable format
+                  status_dict = json.loads(json.dumps(status, default=str))
+                  
+                  # Get results
+                  if status['DetectionStatus'] == 'DETECTION_COMPLETE':
+                      print("Drift detection completed successfully")
+                      
+                      drifts = cf.describe_stack_resource_drifts(
+                          StackName=stack_name,
+                          StackResourceDriftStatusFilters=['MODIFIED']
+                      )
+                      
+                      # Convert all boto3 response objects to JSON serializable format
+                      drifts_dict = json.loads(json.dumps(drifts, default=str))
+                      
+                      if drifts_dict['StackResourceDrifts']:
+                          print(f"Drift detected in {len(drifts_dict['StackResourceDrifts'])} resources")
+                          
+                          message = {
+                              "stack": stack_name,
+                              "status": "DRIFTED",
+                              "stack_drift_status": status.get('StackDriftStatus', 'UNKNOWN'),
+                              "drifts": drifts_dict['StackResourceDrifts'],
+                              "timestamp": datetime.utcnow().isoformat()
+                          }
+                          
+                          subject = f"⚠️ DRIFT DETECTED in {stack_name}"
+                          
+                          # Send to SNS
+                          if sns_topic:
+                              sns.publish(
+                                  TopicArn=sns_topic,
+                                  Subject=subject,
+                                  Message=json.dumps(message, indent=2)
+                              )
+                              print(f"Notification sent to SNS topic: {sns_topic}")
+                          
+                          # Send to Slack
+                          send_to_slack(message, subject)
+                          
+                          return {"status": "DRIFT_DETECTED", "details": message}
+                      else:
+                          print("No drift detected - not sending notification")
+                          
+                          # Return result without sending notification
+                          return {"status": "NO_DRIFT"}
+                  else:
+                      print(f"Drift detection failed: {status.get('DetectionStatusReason', 'Unknown reason')}")
+                      
+                      message = {
+                          "stack": stack_name,
+                          "status": "DETECTION_FAILED",
+                          "details": status_dict,
+                          "timestamp": datetime.utcnow().isoformat()
+                      }
+                      
+                      subject = f"❌ DRIFT DETECTION FAILED for {stack_name}"
+                      
+                      # Send to SNS
+                      if sns_topic:
+                          sns.publish(
+                              TopicArn=sns_topic,
+                              Subject=subject,
+                              Message=json.dumps(message, indent=2)
+                          )
+                          print(f"Notification sent to SNS topic: {sns_topic}")
+                      
+                      # Send to Slack
+                      send_to_slack(message, subject)
+                      
+                      return {"status": "DETECTION_FAILED", "details": status_dict}
+              
+              except Exception as e:
+                  print(f"Error in Lambda function: {str(e)}")
+                  
+                  error_msg = f"Error checking drift for {stack_name}: {str(e)}"
+                  message = {
+                      "stack": stack_name,
+                      "status": "ERROR",
+                      "error": error_msg,
+                      "timestamp": datetime.utcnow().isoformat()
+                  }
+                  
+                  subject = f"🔥 DRIFT DETECTION ERROR for {stack_name}"
+                  
+                  # Send to SNS
+                  if sns_topic:
+                      sns.publish(
+                          TopicArn=sns_topic,
+                          Subject=subject,
+                          Message=json.dumps(message, indent=2)
+                      )
+                      print(f"Error notification sent to SNS topic: {sns_topic}")
+                  
+                  # Send to Slack
+                  send_to_slack(message, subject)
+                  
+                  return {"status": "ERROR", "error": error_msg}
+
+          def check_stackset_drift(stackset_name):
+              """
+              Check a stack set for drift
+              """
+              # Clients
+              cf = boto3.client('cloudformation')
+              sns = boto3.client('sns')
+              
+              # Get SNS topic from environment variable
+              sns_topic = os.environ.get('SNS_TOPIC')
+              if not sns_topic:
+                  print("Warning: SNS_TOPIC environment variable not set")
+              
+              try:
+                  print(f"Starting drift detection for stack set: {stackset_name}")
+                  
+                  # Detect stack set drift
+                  operation_id = cf.detect_stack_set_drift(
+                      StackSetName=stackset_name
+                  )['OperationId']
+                  
+                  print(f"Stack set drift detection initiated with operation ID: {operation_id}")
+                  
+                  # Wait for operation to complete
+                  while True:
+                      operation = cf.describe_stack_set_operation(
+                          StackSetName=stackset_name,
+                          OperationId=operation_id
+                      )
+                      
+                      if operation['StackSetOperation']['Status'] != 'RUNNING':
+                          break
+                          
+                      print(f"Stack set drift detection in progress: {operation['StackSetOperation']['Status']}")
+                      time.sleep(5)
+                  
+                  # Check final status
+                  if operation['StackSetOperation']['Status'] == 'SUCCEEDED':
+                      # Get stack set drift results
+                      stackset = cf.describe_stack_set(StackSetName=stackset_name)
+                      
+                      drift_status = stackset['StackSet'].get('DriftStatus')
+                      if drift_status == 'DRIFTED':
+                          print(f"Stack set {stackset_name} has drifted")
+                          
+                          # Get detailed drift information
+                          detailed_status = json.loads(json.dumps(stackset, default=str))
+                          
+                          message = {
+                              "stackset": stackset_name,
+                              "status": "DRIFTED",
+                              "drift_status": drift_status,
+                              "details": detailed_status,
+                              "timestamp": datetime.utcnow().isoformat()
+                          }
+                          
+                          subject = f"⚠️ STACK SET DRIFT DETECTED in {stackset_name}"
+                          
+                          # Send to SNS
+                          if sns_topic:
+                              sns.publish(
+                                  TopicArn=sns_topic,
+                                  Subject=subject,
+                                  Message=json.dumps(message, indent=2)
+                              )
+                              print(f"Notification sent to SNS topic: {sns_topic}")
+                          
+                          # Send to Slack
+                          send_to_slack(message, subject)
+                          
+                          return {"status": "DRIFT_DETECTED", "details": message}
+                      else:
+                          print(f"No drift detected in stack set {stackset_name}")
+                          return {"status": "NO_DRIFT"}
+                  else:
+                      print(f"Stack set drift detection failed: {operation['StackSetOperation']['Status']}")
+                      
+                      message = {
+                          "stackset": stackset_name,
+                          "status": "DETECTION_FAILED",
+                          "operation_status": operation['StackSetOperation']['Status'],
+                          "details": json.loads(json.dumps(operation, default=str)),
+                          "timestamp": datetime.utcnow().isoformat()
+                      }
+                      
+                      subject = f"❌ STACK SET DRIFT DETECTION FAILED for {stackset_name}"
+                      
+                      # Send to SNS
+                      if sns_topic:
+                          sns.publish(
+                              TopicArn=sns_topic,
+                              Subject=subject,
+                              Message=json.dumps(message, indent=2)
+                          )
+                          print(f"Notification sent to SNS topic: {sns_topic}")
+                      
+                      # Send to Slack
+                      send_to_slack(message, subject)
+                      
+                      return {"status": "DETECTION_FAILED", "details": message}
+              
+              except Exception as e:
+                  print(f"Error in Lambda function: {str(e)}")
+                  
+                  error_msg = f"Error checking drift for stack set {stackset_name}: {str(e)}"
+                  message = {
+                      "stackset": stackset_name,
+                      "status": "ERROR",
+                      "error": error_msg,
+                      "timestamp": datetime.utcnow().isoformat()
+                  }
+                  
+                  subject = f"🔥 STACK SET DRIFT DETECTION ERROR for {stackset_name}"
+                  
+                  # Send to SNS
+                  if sns_topic:
+                      sns.publish(
+                          TopicArn=sns_topic,
+                          Subject=subject,
+                          Message=json.dumps(message, indent=2)
+                      )
+                      print(f"Error notification sent to SNS topic: {sns_topic}")
+                  
+                  # Send to Slack
+                  send_to_slack(message, subject)
+                  
+                  return {"status": "ERROR", "error": error_msg}
+
+          def lambda_handler(event, context):
+              """
+              Main Lambda handler function that checks either:
+              1. All stacks if MONITOR_ALL_STACKS is true
+              2. All stack sets if MONITOR_ALL_STACKSETS is true
+              3. Explicitly named stacks/stack sets provided in event or template
+              """
+              results = {
+                  'stacks': {},
+                  'stacksets': {}
+              }
+              
+              monitor_all_stacks = os.environ.get('MONITOR_ALL_STACKS', 'false').lower() == 'true'
+              monitor_all_stacksets = os.environ.get('MONITOR_ALL_STACKSETS', 'false').lower() == 'true'
+              
+              # Process stacks
+              stacks_to_check = []
+              
+              if monitor_all_stacks:
+                  # Get all stacks
+                  stacks_to_check = get_all_stacks()
+                  print(f"Monitoring all stacks: found {len(stacks_to_check)} stacks")
+              elif 'stack_names' in event and isinstance(event['stack_names'], list):
+                  # Use stacks specified in the event
+                  stacks_to_check = event['stack_names']
+                  print(f"Monitoring specific stacks from event: {stacks_to_check}")
+              else:
+                  # No stacks specified
+                  print("No stacks specified for monitoring")
+              
+              # Check each stack for drift
+              for stack_name in stacks_to_check:
+                  if stack_name:  # Skip empty strings
+                      results['stacks'][stack_name] = check_stack_drift(stack_name)
+              
+              # Process stack sets
+              stacksets_to_check = []
+              
+              if monitor_all_stacksets:
+                  # Get all stack sets
+                  stacksets_to_check = get_all_stacksets()
+                  print(f"Monitoring all stack sets: found {len(stacksets_to_check)} stack sets")
+              elif 'stackset_names' in event and isinstance(event['stackset_names'], list):
+                  # Use stack sets specified in the event
+                  stacksets_to_check = event['stackset_names']
+                  print(f"Checking specific stack sets: {stacksets_to_check}")
+              
+              # Check each stack set for drift
+              for stackset_name in stacksets_to_check:
+                  if stackset_name:  # Skip empty strings
+                      results['stacksets'][stackset_name] = check_stackset_drift(stackset_name)
+              
+              # Handle single stack case
+              if 'stack_name' in event:
+                  stack_name = event['stack_name']
+                  results['stacks'][stack_name] = check_stack_drift(stack_name)
+              
+              # Handle single stack set case
+              if 'stackset_name' in event:
+                  stackset_name = event['stackset_name']
+                  results['stacksets'][stackset_name] = check_stackset_drift(stackset_name)
+              
+              return results
+
+  DriftDetectionScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: CloudFormationDriftDetectionSchedule
+      Description: Scheduled rule to trigger drift detection for CloudFormation stacks
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Id: DriftDetectionLambdaTarget
+          Arn: !GetAtt DriftDetectionLambda.Arn
+          Input: !Join
+            - ''
+            - - '{"stack_names": '
+              - !If [MonitoringAllStacks, '[]', !GetAtt StacksToMonitorJsonArray.JsonArray]
+              - ', "stackset_names": '
+              - !If [MonitoringAllStackSets, '[]', '[]']
+              - '}'
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function for drift detection
+    Value: !GetAtt DriftDetectionLambda.Arn
+  
+  SNSTopicArn:
+    Description: ARN of the SNS topic for drift notifications
+    Value: !Ref DriftNotificationTopic
+  
+  EventBridgeRuleArn:
+    Description: ARN of the EventBridge rule for scheduled execution
+    Value: !GetAtt DriftDetectionScheduleRule.Arn
+  
+  StacksBeingMonitored:
+    Description: List of CloudFormation stacks being monitored for drift
+    Value: !If
+      - MonitoringAllStacks
+      - "All stacks in account"
+      - !Join [", ", !Ref StacksToMonitor]
+      
+  StackSetsBeingMonitored:
+    Description: List of CloudFormation stack sets being monitored for drift
+    Value: !If
+      - MonitoringAllStackSets
+      - "All stack sets in account"
+      - "None (manually initiated only)"
+
+  RunManualDriftCheckCommand:
+    Description: AWS CLI command to manually trigger drift detection for all stacks and stack sets
+    Value: !Sub "aws lambda invoke --function-name ${DriftDetectionLambda} --payload '{\"stack_names\":[],\"stackset_names\":[]}' output.json"
